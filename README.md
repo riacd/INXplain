@@ -1,6 +1,6 @@
-# IGPrune: Information-Guided Graph Pruning
+# INexplainer
 
-Official PyTorch implementation of **"IGPrune: Information-Guided Graph Pruning"** (WWW 2026).
+Official PyTorch implementation of **"Information-Guided Structure Discovery from Interaction Networks"** (KDD 2026).
 
 ## Overview
 
