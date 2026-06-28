@@ -3,7 +3,7 @@
 Run directed-gradient benchmark experiments and merge the new results with
 previously completed baseline comparisons.
 
-This script reruns the original directed IGPrune implementation
+This script reruns the original directed INXplain implementation
 (`gradient_based_original`) on selected dataset/task pairs while preserving
 edge direction. It then combines the new directed result with baseline rows
 from existing unified benchmark outputs.
@@ -28,7 +28,7 @@ from GS.benchmark.unified import UnifiedBenchmark
 DIRECTED_MODEL_NAME = "gradient_based_original"
 MERGED_MODEL_NAME = "gradient_based_directed"
 MERGED_CATEGORY = "directed"
-MERGED_DESCRIPTION = "Directed IGPrune benchmark rerun using the original gradient-based implementation"
+MERGED_DESCRIPTION = "Directed INXplain benchmark rerun using the original gradient-based implementation"
 
 
 def parse_dataset_task_pairs(values: list[str]) -> list[tuple[str, str]]:
@@ -150,7 +150,7 @@ def merge_with_baselines(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run directed IGPrune benchmark and merge with completed baseline results.")
+    parser = argparse.ArgumentParser(description="Run directed INXplain benchmark and merge with completed baseline results.")
     parser.add_argument(
         "--dataset-tasks",
         nargs="+",

@@ -1,4 +1,4 @@
-"""Utility helpers for IGPrune."""
+"""Utility helpers for INXplain."""
 
 from .summary_graph_visualization import (
     render_summary_graphs,

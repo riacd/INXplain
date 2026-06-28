@@ -1,5 +1,5 @@
 """
-IGPrune: Information-Guided Graph Pruning Library
+INXplain: Information-Guided Graph Pruning Library
 
 A comprehensive Python package for graph pruning tasks, providing:
 1. Dataset loading and preprocessing

@@ -1,8 +1,8 @@
 """
-Case Study: Simplify 50 Lake Networks using IGPrune (Gradient-Based) Model
+Case Study: Simplify 50 Lake Networks using INXplain (Gradient-Based) Model
 
 This script processes 50 directed graphs from the 50lake_networks directory,
-applying the gradient-based graph summarization model (IGPrune).
+applying the gradient-based graph summarization model (INXplain).
 """
 
 import os
@@ -176,8 +176,8 @@ def main(num_steps=2):
             print(f"  Nodes: {graph_data.num_nodes}")
             print(f"  Edges: {graph_data.num_edges}")
 
-            # Initialize gradient-based model (IGPrune)
-            print(f"\nInitializing IGPrune model...")
+            # Initialize gradient-based model (INXplain)
+            print(f"\nInitializing INXplain model...")
             model = GradientBasedGraphSummarization(
                 input_dim=graph_data.x.size(1),
                 downstream_model_type='gcn',
@@ -235,7 +235,7 @@ def main(num_steps=2):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Simplify 50 lake networks using IGPrune model')
+    parser = argparse.ArgumentParser(description='Simplify 50 lake networks using INXplain model')
     parser.add_argument('--num_steps', type=int, default=2,
                         help='Number of simplification steps (default: 2)')
     args = parser.parse_args()

@@ -7,10 +7,10 @@
 - 任务: original label
 - 下游模型: GCN
 - num_steps: [5, 10, 20, 50]
-- 测试模型: IGPrune + 8个baseline（共9个）
+- 测试模型: INXplain + 8个baseline（共9个）
 
 模型列表：
-1. gradient_based (IGPrune)
+1. gradient_based (INXplain)
 2. networkit_forest_fire (EFF)
 3. networkit_local_degree (LD)
 4. networkit_local_similarity (LS)
@@ -45,7 +45,7 @@ def run_hyperparameter_experiment():
 
     # 测试的所有模型
     models = [
-        'gradient_based',           # IGPrune
+        'gradient_based',           # INXplain
         'networkit_forest_fire',    # EFF
         'networkit_local_degree',   # LD
         'networkit_local_similarity', # LS
@@ -58,7 +58,7 @@ def run_hyperparameter_experiment():
 
     # 模型简称映射
     model_short_names = {
-        'gradient_based': 'IGPrune',
+        'gradient_based': 'INXplain',
         'networkit_forest_fire': 'EFF',
         'networkit_local_degree': 'LD',
         'networkit_local_similarity': 'LS',

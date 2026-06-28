@@ -104,35 +104,35 @@ class ModelRegistry:
                 "gradient_based",
                 GradientBasedUndirectedGraphSummarization,
                 category="development",
-                description="IGPrune - Gradient-based undirected graph simplification model (Development Model 2)"
+                description="INXplain - Gradient-based undirected graph simplification model (Development Model 2)"
             )
 
             self.register_model(
                 "gradient_based_joint_subset_best",
                 JointSubsetBestGradientSummarization,
                 category="development",
-                description="IGPrune joint-subset variant - delete the sampled subset with minimum validation loss impact"
+                description="INXplain joint-subset variant - delete the sampled subset with minimum validation loss impact"
             )
 
             self.register_model(
                 "gradient_based_joint_edge_score",
                 JointSubsetEdgeScoreGradientSummarization,
                 category="development",
-                description="IGPrune joint-subset variant - aggregate sampled subset losses to edge scores"
+                description="INXplain joint-subset variant - aggregate sampled subset losses to edge scores"
             )
 
             self.register_model(
                 "gradient_based_joint_edge_score_stable",
                 JointSubsetStabilityAwareEdgeScoreGradientSummarization,
                 category="development",
-                description="IGPrune joint-subset variant - edge scores with stability penalty over sampled subsets"
+                description="INXplain joint-subset variant - edge scores with stability penalty over sampled subsets"
             )
 
             self.register_model(
                 "gradient_based_joint_product_importance",
                 JointSubsetProductImportanceGradientSummarization,
                 category="development",
-                description="IGPrune joint-subset variant - product aggregation of GCN/GAT/GraphSAGE importance scores"
+                description="INXplain joint-subset variant - product aggregation of GCN/GAT/GraphSAGE importance scores"
             )
 
             self.register_model(

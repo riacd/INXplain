@@ -1,8 +1,8 @@
 """
-Case Study: Simplify 230 Lake Networks using IGPrune (Gradient-Based) Model
+Case Study: Simplify 230 Lake Networks using INXplain (Gradient-Based) Model
 
 This script processes 230 directed graphs from the 230lake_networks directory,
-applying the gradient-based graph summarization model (IGPrune) for 30 steps.
+applying the gradient-based graph summarization model (INXplain) for 30 steps.
 The output directory mirrors the structure produced for the 50-lake case study.
 """
 
@@ -108,7 +108,7 @@ def summarize_graph(
     num_steps: int,
 ) -> list[Data]:
     """
-    Apply IGPrune summarization and return the sequence of simplified graphs.
+    Apply INXplain summarization and return the sequence of simplified graphs.
     """
     model.train_mask = graph_data.train_mask
     model.val_mask = graph_data.val_mask
@@ -211,7 +211,7 @@ def run_case_study(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Simplify 230 lake networks using the IGPrune directed graph summarization model (30 steps)."
+        description="Simplify 230 lake networks using the INXplain directed graph summarization model (30 steps)."
     )
     parser.add_argument(
         "--input_dir",

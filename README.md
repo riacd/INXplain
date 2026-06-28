@@ -1,12 +1,14 @@
-# IGPrune: Information-Guided Graph Pruning
+# INXplain: Information-Guided Graph Pruning
 
-This repository contains the source code for the IGPrune graph pruning experiments, including the proposed gradient-based method and baseline integrations. The benchmark evaluates how much downstream node-classification information is retained as graph complexity is reduced.
+This repository contains the source code for the INXplain graph pruning experiments, including the proposed gradient-based method and baseline integrations. The benchmark evaluates how much downstream node-classification information is retained as graph complexity is reduced.
+
+Target venue: ICDE 2026.
 
 ## Repository Layout
 
 ```text
 GS/
-  models/        IGPrune models, downstream GNNs, and model registry
+  models/        INXplain models, downstream GNNs, and model registry
   datasets/      dataset loading, preprocessing, and task label generation
   benchmark/     unified benchmark orchestration
   metrics/       complexity, information retention, accuracy, and IC-AUC metrics
@@ -39,7 +41,7 @@ List available registered models:
 python scripts/run_unified_benchmark.py --list-models
 ```
 
-Run a single IGPrune benchmark:
+Run a single INXplain benchmark:
 
 ```bash
 python scripts/run_unified_benchmark.py \
@@ -95,7 +97,7 @@ python scripts/run_inxplain_gnn_ablation.py \
 
 Main model identifiers:
 
-- `gradient_based`: default IGPrune gradient-based undirected graph pruning model.
+- `gradient_based`: default INXplain gradient-based undirected graph pruning model.
 - `gradient_based_original`: original directed-edge deletion variant kept for comparison.
 - `gradient_based_undirected`: explicit undirected variant.
 - `neural_enhanced_main`: neural-enhanced gradient variant.

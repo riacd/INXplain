@@ -97,7 +97,7 @@ def create_comparison_plots(model_metrics, output_dir):
 
     # 模型简称映射
     model_display_names = {
-        'gradient_based': 'IGPrune',
+        'gradient_based': 'INXplain',
         'networkit_forest_fire': 'EFF',
         'networkit_local_degree': 'LD',
         'networkit_local_similarity': 'LS',
@@ -208,7 +208,7 @@ def generate_summary_tables(model_metrics, output_dir):
 
     # 模型简称映射
     model_display_names = {
-        'gradient_based': 'IGPrune',
+        'gradient_based': 'INXplain',
         'networkit_forest_fire': 'EFF',
         'networkit_local_degree': 'LD',
         'networkit_local_similarity': 'LS',

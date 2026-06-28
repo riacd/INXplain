@@ -45,7 +45,7 @@ def resume_hyperparameter_experiment(existing_results_dir):
 
     # 测试的所有模型
     all_models = [
-        'gradient_based',           # IGPrune
+        'gradient_based',           # INXplain
         'networkit_forest_fire',    # EFF
         'networkit_local_degree',   # LD
         'networkit_local_similarity', # LS
@@ -58,7 +58,7 @@ def resume_hyperparameter_experiment(existing_results_dir):
 
     # 模型简称映射
     model_short_names = {
-        'gradient_based': 'IGPrune',
+        'gradient_based': 'INXplain',
         'networkit_forest_fire': 'EFF',
         'networkit_local_degree': 'LD',
         'networkit_local_similarity': 'LS',
