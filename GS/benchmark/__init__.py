@@ -1,13 +1,13 @@
 """
-基准测试模块
+Benchmark Testing Module
 
-提供标准化的基准测试框架，用于评估不同图总结模型的性能。
+Provides standardized benchmark framework for evaluating different graph pruning models.
 
-功能：
-1. 标准化的测试流程
-2. 多数据集支持
-3. 多种下游任务支持
-4. 结果可视化和保存
+Features:
+1. Standardized testing workflow
+2. Multi-dataset support
+3. Multiple downstream task support
+4. Result visualization and saving
 """
 
 from .core import Benchmark

@@ -1,24 +1,24 @@
 """
-GS: Graph Summarization Library
+IGPrune: Information-Guided Graph Pruning Library
 
-这是一个用于图总结任务的综合性Python包，提供：
-1. 数据集加载与处理
-2. 图总结模型实现  
-3. 下游任务模型
-4. 基准测试框架
-5. 性能度量指标
+A comprehensive Python package for graph pruning tasks, providing:
+1. Dataset loading and preprocessing
+2. Graph pruning model implementations
+3. Downstream task models
+4. Benchmark testing framework
+5. Performance metrics
 
-模块结构：
-- datasets: 数据集处理模块
-- models: 模型实现模块
-- benchmark: 基准测试模块
-- metrics: 度量指标模块
-- utils: 工具函数模块
+Module Structure:
+- datasets: Dataset processing module
+- models: Model implementation module
+- benchmark: Benchmark testing module
+- metrics: Performance metrics module
+- utils: Utility functions module
 """
 
 __version__ = "1.0.0"
 
-# 导入主要组件
+# Import main components
 from .datasets import DatasetLoader
 from .models import (
     GraphSummarizationModel,
@@ -28,8 +28,8 @@ from .models import (
     GCNDownstreamModel,
     GATDownstreamModel
 )
-from .benchmark import Benchmark
-from .metrics import ComplexityMetric, InformationMetric, SNRAnalysis, ICAnalysis
+from .benchmark import Benchmark, UnifiedBenchmark
+from .metrics import ComplexityMetric, InformationMetric, ICAnalysis, SNRAnalysis
 
 __all__ = [
     # 数据集
@@ -49,9 +49,11 @@ __all__ = [
 
     # 基准测试
     'Benchmark',
+    'UnifiedBenchmark',
 
     # 度量指标
     'ComplexityMetric',
     'InformationMetric',
+    'ICAnalysis',
     'SNRAnalysis'
 ]

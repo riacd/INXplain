@@ -1,7 +1,7 @@
 """
-模型基类定义
+Model Base Class Definitions
 
-定义Graph Summarization和Downstream Task模型的抽象基类。
+Defines abstract base classes for Graph Pruning and Downstream Task models.
 """
 
 import torch

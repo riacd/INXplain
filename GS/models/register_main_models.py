@@ -1,7 +1,7 @@
 """
-注册Neural-Enhanced模型及其消融实验变体
+Register Neural-Enhanced Model and its Ablation Experiment Variants
 
-专注于neural_enhanced_gradient系列模型，已替代旧的learnable模型。
+Focuses on neural_enhanced_gradient series models, which have replaced old learnable models.
 """
 
 from .registry import model_registry
@@ -15,9 +15,9 @@ from .neural_enhanced_gradient import (
 
 
 def register_all_main_models():
-    """注册Neural-Enhanced图总结模型及其变体"""
+    """Register Neural-Enhanced graph summarization model and its variants"""
 
-    # 主要模型 (标准配置)
+    # Main model (standard configuration)
     model_registry.register_model(
         name="neural_enhanced_main",
         model_class=NeuralEnhancedGradientModel,
@@ -26,7 +26,7 @@ def register_all_main_models():
         variant="base"
     )
 
-    # 融合权重变体 (Ablation Study)
+    # Fusion weight variants (Ablation Study)
     model_registry.register_model(
         name="neural_enhanced_high_fusion",
         model_class=NeuralEnhancedGradientModel_HighFusion,
@@ -43,7 +43,7 @@ def register_all_main_models():
         variant="fusion_weight"
     )
 
-    # 学习策略变体 (Ablation Study)
+    # Learning strategy variants (Ablation Study)
     model_registry.register_model(
         name="neural_enhanced_no_residual",
         model_class=NeuralEnhancedGradientModel_NoResidual,
@@ -52,7 +52,7 @@ def register_all_main_models():
         variant="learning_strategy"
     )
 
-    # 梯度计算变体 (Ablation Study)
+    # Gradient computation variants (Ablation Study)
     model_registry.register_model(
         name="neural_enhanced_slow_gradient",
         model_class=NeuralEnhancedGradientModel_SlowGradient,
@@ -65,7 +65,7 @@ def register_all_main_models():
 
 
 def get_available_training_strategies():
-    """获取可用的训练策略列表"""
+    """Get list of available training strategies"""
     return ['fixed_uniform', 'fixed_cosine', 'dynamic_frank_wolfe', 'dynamic_ugd']
 
 

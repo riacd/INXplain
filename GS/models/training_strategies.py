@@ -1,7 +1,7 @@
 """
-训练策略实现
+Training Strategy Implementation
 
-根据MODEL.md文档实现固定重加权和动态重加权训练策略。
+Implements fixed reweighting and dynamic reweighting training strategies according to MODEL.md document.
 """
 
 import torch
@@ -19,38 +19,38 @@ from .main_model import LearnableGraphSummarization
 
 
 class TrainingStrategy(ABC):
-    """训练策略基类"""
+    """Training strategy base class"""
     
     @abstractmethod
     def compute_weights(self, gradients: List[torch.Tensor], **kwargs) -> List[float]:
         """
-        计算各步骤的权重。
+        Compute weights for each step.
         
         Args:
-            gradients: 各步骤的梯度列表
+            gradients: 各步骤的Gradient list
             
         Returns:
-            权重列表
+            Weight list
         """
         pass
 
 
 class FixedReweightingStrategy(TrainingStrategy):
-    """固定重加权策略"""
+    """Fixed reweighting strategy"""
     
     def __init__(self, strategy_type: str = 'uniform'):
         """
-        初始化固定重加权策略。
+        Initialize fixed reweighting strategy.
         
         Args:
-            strategy_type: 策略类型
-                - 'uniform': 全部权重为1
+            strategy_type: Strategy type
+                - 'uniform': All weights are 1
                 - 'cosine': 0.5 + 0.5*cos(k/N_step)
         """
         self.strategy_type = strategy_type
     
     def compute_weights(self, gradients: List[torch.Tensor], num_steps: int, **kwargs) -> List[float]:
-        """计算固定权重"""
+        """Compute fixed weights"""
         if self.strategy_type == 'uniform':
             return [1.0] * num_steps
         elif self.strategy_type == 'cosine':
@@ -64,52 +64,52 @@ class FixedReweightingStrategy(TrainingStrategy):
 
 
 class FrankWolfeSolver:
-    """Frank-Wolfe求解器"""
+    """Frank-Wolfe solver"""
     
     def __init__(self, max_iterations: int = 100):
         self.max_iterations = max_iterations
     
     def solve(self, gradients: List[torch.Tensor]) -> List[float]:
         """
-        使用Frank-Wolfe算法求解最优权重。
+        Solve optimal weights using Frank-Wolfe algorithm.
         
         Args:
-            gradients: 梯度列表
+            gradients: Gradient list
             
         Returns:
-            最优权重列表
+            最优Weight list
         """
         N = len(gradients)
         if N == 0:
             return []
         
-        # 初始化权重
+        # Initialize weights
         eta = [1.0 / N] * N
         
-        # 将梯度展平为向量
+        # Flatten gradients to vectors
         grad_vectors = []
         for g in gradients:
             if isinstance(g, torch.Tensor):
                 grad_vectors.append(g.detach().flatten())
             else:
-                # 如果是标量，转换为张量
+                # If scalar, convert to tensor
                 grad_vectors.append(torch.tensor([float(g)]))
         
-        # 确保所有梯度向量具有相同的长度
+        # Ensure all gradient vectors have the same length
         max_len = max(len(gv) for gv in grad_vectors)
         for i in range(len(grad_vectors)):
             if len(grad_vectors[i]) < max_len:
-                # 用零填充
+                # Pad with zeros
                 padding = torch.zeros(max_len - len(grad_vectors[i]))
                 grad_vectors[i] = torch.cat([grad_vectors[i], padding])
         
         for t in range(self.max_iterations):
-            # 计算当前方向
+            # Compute current direction
             d = torch.zeros_like(grad_vectors[0])
             for k, gk in enumerate(grad_vectors):
                 d += eta[k] * gk
             
-            # 找到最小内积
+            # Find minimum inner product
             min_dot = float('inf')
             k_star = 0
             for k, gk in enumerate(grad_vectors):
@@ -118,16 +118,16 @@ class FrankWolfeSolver:
                     min_dot = dot_product
                     k_star = k
             
-            # 构建顶点向量
+            # Build vertex vector
             v = [0.0] * N
             v[k_star] = 1.0
             
-            # 线搜索
+            # Line search
             eta_tensor = torch.tensor(eta)
             v_tensor = torch.tensor(v)
             diff = v_tensor - eta_tensor
             
-            # 计算最优步长
+            # Compute optimal step size
             numerator = torch.dot(d, eta_tensor * d.sum() - sum(eta[j] * grad_vectors[j] for j in range(N)))
             denominator = torch.dot(diff, sum(eta[j] * grad_vectors[j] for j in range(N)) - d.sum() * v_tensor)
             
@@ -136,7 +136,7 @@ class FrankWolfeSolver:
             else:
                 gamma = 0.0
             
-            # 更新权重
+            # Update weights
             for k in range(N):
                 eta[k] = (1 - gamma) * eta[k] + gamma * v[k]
         
@@ -144,7 +144,7 @@ class FrankWolfeSolver:
 
 
 class UGDSolver:
-    """UGD求解器"""
+    """UGD solver"""
     
     def __init__(self, learning_rate: float = 0.01, max_iterations: int = 100):
         self.learning_rate = learning_rate
@@ -152,22 +152,22 @@ class UGDSolver:
     
     def solve(self, gradients: List[torch.Tensor]) -> List[float]:
         """
-        使用UGD算法求解最优权重。
+        Solve optimal weights using UGD algorithm.
         
         Args:
-            gradients: 梯度列表
+            gradients: Gradient list
             
         Returns:
-            最优权重列表
+            最优Weight list
         """
         N = len(gradients)
         if N == 0:
             return []
         
-        # 初始化权重
+        # Initialize weights
         eta = [1.0 / N] * N
         
-        # 将梯度展平为向量
+        # Flatten gradients to vectors
         grad_vectors = []
         for g in gradients:
             if isinstance(g, torch.Tensor):
@@ -175,7 +175,7 @@ class UGDSolver:
             else:
                 grad_vectors.append(torch.tensor([float(g)]))
         
-        # 确保所有梯度向量具有相同长度
+        # Ensure all gradient vectors have the same length
         max_len = max(len(gv) for gv in grad_vectors)
         for i in range(len(grad_vectors)):
             if len(grad_vectors[i]) < max_len:
@@ -183,30 +183,30 @@ class UGDSolver:
                 grad_vectors[i] = torch.cat([grad_vectors[i], padding])
         
         for t in range(self.max_iterations):
-            # 计算当前方向
+            # Compute current direction
             d = torch.zeros_like(grad_vectors[0])
             for k, gk in enumerate(grad_vectors):
                 d += eta[k] * gk
             
-            # 更新权重
+            # Update weights
             for k in range(N):
                 dot_product = torch.dot(d, grad_vectors[k]).item()
                 eta[k] -= self.learning_rate * dot_product
             
-            # 投影到单纯形
+            # Project to simplex
             eta = self._project_to_simplex(eta)
         
         return eta
     
     def _project_to_simplex(self, weights: List[float]) -> List[float]:
-        """投影到单纯形"""
+        """Project to simplex"""
         weights = np.array(weights)
         n = len(weights)
         
-        # 确保非负
+        # Ensure non-negative
         weights = np.maximum(weights, 0)
         
-        # 归一化
+        # Normalize
         weight_sum = np.sum(weights)
         if weight_sum > 0:
             weights = weights / weight_sum
@@ -217,14 +217,14 @@ class UGDSolver:
 
 
 class DynamicReweightingStrategy(TrainingStrategy):
-    """动态重加权策略"""
+    """Dynamic reweighting strategy"""
     
     def __init__(self, solver_type: str = 'frank_wolfe'):
         """
-        初始化动态重加权策略。
+        Initialize dynamic reweighting strategy.
         
         Args:
-            solver_type: 求解器类型
+            solver_type: Solver type
                 - 'frank_wolfe': Frank-Wolfe算法
                 - 'ugd': UGD算法
         """
@@ -238,12 +238,12 @@ class DynamicReweightingStrategy(TrainingStrategy):
             raise ValueError(f"Unknown solver type: {solver_type}")
     
     def compute_weights(self, gradients: List[torch.Tensor], **kwargs) -> List[float]:
-        """使用求解器计算动态权重"""
+        """Compute dynamic weights using solver"""
         return self.solver.solve(gradients)
 
 
 class GraphSummarizationTrainer:
-    """图总结模型训练器"""
+    """Graph summarization model trainer"""
     
     def __init__(self,
                  model: LearnableGraphSummarization,
@@ -252,14 +252,14 @@ class GraphSummarizationTrainer:
                  optimizer: torch.optim.Optimizer = None,
                  device: str = 'cpu'):
         """
-        初始化训练器。
+        Initialize trainer.
         
         Args:
-            model: 图总结模型
-            strategy: 训练策略
-            downstream_model_factory: 创建下游模型的工厂函数
-            optimizer: 优化器
-            device: 计算设备
+            model: Graph summarization model
+            strategy: Training strategy
+            downstream_model_factory: Factory function to create downstream model
+            optimizer: Optimizer
+            device: Computing device
         """
         self.model = model
         self.strategy = strategy
@@ -282,7 +282,7 @@ class GraphSummarizationTrainer:
                                      val_mask: torch.Tensor,
                                      num_steps: int = 10,
                                      downstream_epochs: int = 100) -> Dict[str, Any]:
-        """固定权重策略的训练epoch"""
+        """Training epoch for fixed weight strategy"""
         return self._train_epoch_impl(
             graph, train_labels, train_mask, val_mask, 
             num_steps, downstream_epochs, use_dynamic_weights=False
@@ -295,7 +295,7 @@ class GraphSummarizationTrainer:
                                        val_mask: torch.Tensor,
                                        num_steps: int = 10,
                                        downstream_epochs: int = 100) -> Dict[str, Any]:
-        """动态权重策略的训练epoch"""
+        """Training epoch for dynamic weight strategy"""
         return self._train_epoch_impl(
             graph, train_labels, train_mask, val_mask, 
             num_steps, downstream_epochs, use_dynamic_weights=True
@@ -310,19 +310,19 @@ class GraphSummarizationTrainer:
                          downstream_epochs: int = 100,
                          use_dynamic_weights: bool = False) -> Dict[str, Any]:
         """
-        训练实现，支持固定和动态权重策略。
+        Training implementation supporting fixed and dynamic weight strategies.
         
         Args:
-            graph: 训练图
-            train_labels: 训练标签
-            train_mask: 训练掩码
-            val_mask: 验证掩码
-            num_steps: 步数
-            downstream_epochs: 下游任务模型训练轮数
-            use_dynamic_weights: 是否使用动态权重
+            graph: Training graph
+            train_labels: Training labels
+            train_mask: Training mask
+            val_mask: Validation mask
+            num_steps: Number of steps
+            downstream_epochs: Number of epochs for downstream task model training
+            use_dynamic_weights: Whether to use dynamic weights
             
         Returns:
-            训练信息字典
+            Training information dictionary
         """
         self.model.train()
         
@@ -338,7 +338,7 @@ class GraphSummarizationTrainer:
             )
     
     def _train_epoch_fixed(self, graph, train_labels, train_mask, val_mask, num_steps, downstream_epochs):
-        """固定权重训练实现"""
+        """Fixed weight training implementation"""
         self.optimizer.zero_grad()
         
         step_losses = []
@@ -380,7 +380,7 @@ class GraphSummarizationTrainer:
         }
     
     def _train_epoch_dynamic(self, graph, train_labels, train_mask, val_mask, num_steps, downstream_epochs):
-        """动态权重训练实现，按照动态重加权伪代码"""
+        """Dynamic weight training implementation, following dynamic reweighting pseudocode"""
         
         # Initialize gradient accumulator G ← 0
         step_losses = []
@@ -389,7 +389,7 @@ class GraphSummarizationTrainer:
         
         # For k=1 to N: 计算每个步骤的损失和梯度
         for k in range(1, num_steps + 1):
-            self.optimizer.zero_grad()  # 清零梯度，为计算单步梯度准备
+            self.optimizer.zero_grad()  # Zero gradients, prepare for single-step gradient computation
             
             current_graph, downstream_model = self._generate_step_k_graph_and_train_downstream(
                 graph, train_labels, train_mask, val_mask, k, num_steps, downstream_epochs
@@ -408,7 +408,7 @@ class GraphSummarizationTrainer:
             # Compute gradient g_k = ∇_φ L^k(φ)
             step_loss.backward()
             
-            # 收集梯度
+            # Collect gradients
             step_gradient = []
             for param in self.model.parameters():
                 if param.grad is not None:
@@ -429,7 +429,7 @@ class GraphSummarizationTrainer:
         for w, grad in zip(weights, step_gradients):
             aggregated_gradient += w * grad
         
-        # 将聚合梯度赋值给模型参数
+        # Assign aggregated gradients to model parameters
         param_idx = 0
         for param in self.model.parameters():
             param_size = param.numel()
@@ -439,7 +439,7 @@ class GraphSummarizationTrainer:
         # Update parameters φ ← Optimizer(φ, G)
         self.optimizer.step()
         
-        # 计算总损失用于记录
+        # Compute total loss for logging
         total_loss = sum(w * loss for w, loss in zip(weights, step_losses))
         
         return {
@@ -450,7 +450,7 @@ class GraphSummarizationTrainer:
         }
     
     def _generate_step_k_graph_and_train_downstream(self, graph, train_labels, train_mask, val_mask, k, num_steps, downstream_epochs):
-        """生成第k步简化图并训练下游模型"""
+        """Generate step k simplified graph and train downstream model"""
         # Generate simplified graph G_k using g_φ
         current_graph = copy.deepcopy(graph)
         
@@ -522,30 +522,30 @@ class GraphSummarizationTrainer:
               num_steps: int = 10,
               downstream_epochs: int = 50) -> List[Dict[str, Any]]:
         """
-        完整训练过程，按照MODEL.md伪代码实现。
+        Complete training process, implemented according to MODEL.md pseudocode.
         
         Args:
-            graph: 训练图
-            train_labels: 训练标签
-            train_mask: 训练掩码
-            val_mask: 验证掩码
-            num_epochs: 图总结网络训练轮数
-            num_steps: 步数
-            downstream_epochs: 每个下游任务模型的训练轮数
+            graph: Training graph
+            train_labels: Training labels
+            train_mask: Training mask
+            val_mask: Validation mask
+            num_epochs: Number of epochs for graph summarization network training
+            num_steps: Number of steps
+            downstream_epochs: Number of epochs for each downstream task model
             
         Returns:
-            训练历史
+            Training history
         """
         history = []
         
-        print(f"开始训练图总结网络 ({num_epochs} epochs)")
-        print(f"每个epoch将训练 {num_steps} 个下游任务模型，每个模型训练 {downstream_epochs} epochs")
+        print(f"开始Training graph总结网络 ({num_epochs} epochs)")
+        print(f"Each epoch will train {num_steps} downstream task models, each model trained for {downstream_epochs} epochs")
         
-        # 创建进度条
-        epoch_pbar = tqdm(range(num_epochs), desc="训练图总结网络", unit="epoch")
+        # Create progress bar
+        epoch_pbar = tqdm(range(num_epochs), desc="Training graph总结网络", unit="epoch")
         
         for epoch in epoch_pbar:
-            # 根据策略类型选择训练方法
+            # 根据Strategy type选择训练方法
             if isinstance(self.strategy, DynamicReweightingStrategy):
                 epoch_info = self.train_epoch_dynamic_reweighting(
                     graph, train_labels, train_mask, val_mask, 
@@ -560,7 +560,7 @@ class GraphSummarizationTrainer:
             epoch_info['epoch'] = epoch
             history.append(epoch_info)
             
-            # 更新进度条描述
+            # Update progress bar description
             strategy_type = "Dynamic" if isinstance(self.strategy, DynamicReweightingStrategy) else "Fixed"
             epoch_pbar.set_postfix({
                 'Loss': f'{epoch_info["total_loss"]:.4f}',
@@ -568,12 +568,12 @@ class GraphSummarizationTrainer:
                 'Weights': f'{epoch_info["weights"][0]:.3f}...{epoch_info["weights"][-1]:.3f}'
             })
             
-            # 每10个epoch详细输出一次
+            # Detailed output every 10 epochs
             if epoch % 10 == 0:
                 tqdm.write(f"Epoch {epoch} ({strategy_type}): Total Loss = {epoch_info['total_loss']:.4f}")
                 tqdm.write(f"  Step losses: {[f'{x:.4f}' for x in epoch_info['step_losses']]}")
                 tqdm.write(f"  Weights: {[f'{x:.3f}' for x in epoch_info['weights']]}")
         
         epoch_pbar.close()
-        print("图总结网络训练完成")
+        print("Graph summarization network training completed")
         return history

@@ -8,20 +8,28 @@ import torch
 from torch_geometric.data import Data
 from typing import Dict, List, Tuple, Optional, Any, Union
 import pandas as pd
+import os
+os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
+os.environ.setdefault('XDG_CACHE_HOME', '/tmp')
 import matplotlib.pyplot as plt
 from pathlib import Path
 import time
 import json
 import numpy as np
-import networkx as nx
-from torch_geometric.utils import to_networkx
 import gc
 import psutil
-import os
+import random
 
-from ..models import model_registry, GraphSummarizationModel, DownstreamModel
+from ..models import (
+    model_registry,
+    GraphSummarizationModel,
+    DownstreamModel,
+    create_downstream_model,
+    normalize_downstream_model_name,
+)
 from ..datasets import DatasetLoader
-from ..metrics import ComplexityMetric, InformationMetric, AccuracyMetric, SNRAnalysis, ICAnalysis
+from ..metrics import ComplexityMetric, InformationMetric, ICAnalysis
+from ..utils.summary_graph_visualization import visualize_from_torch_summary_graphs
 
 
 class UnifiedBenchmark:
@@ -106,8 +114,12 @@ class UnifiedBenchmark:
                         downstream_model: str = 'gcn',
                         num_steps: int = 10,
                         epochs: int = 100,
+                        preserve_edge_direction: bool = False,
                         model_kwargs: Dict = None,
-                        downstream_kwargs: Dict = None) -> Dict[str, Any]:
+                        downstream_kwargs: Dict = None,
+                        min_original_accuracy: Optional[float] = None,
+                        min_accuracy_over_majority: float = 0.0,
+                        require_informative_reference: bool = True) -> Dict[str, Any]:
         """
         测试单个模型的性能
 
@@ -118,8 +130,12 @@ class UnifiedBenchmark:
             downstream_model: 下游任务模型类型
             num_steps: 图总结步数
             epochs: 下游任务训练轮数
+            preserve_edge_direction: 是否保留原始图的边方向
             model_kwargs: 模型初始化参数
             downstream_kwargs: 下游任务模型参数
+            min_original_accuracy: 原图测试准确率最低要求
+            min_accuracy_over_majority: 原图准确率至少超过多数类基线的幅度
+            require_informative_reference: 已废弃；保留参数以兼容旧脚本
 
         Returns:
             包含测试结果的字典
@@ -128,6 +144,8 @@ class UnifiedBenchmark:
         print(f"测试模型: {model_name} on {dataset_name} ({task_type} task)")
         print(f"{'='*80}")
 
+        downstream_model = normalize_downstream_model_name(downstream_model)
+
         # 创建实验目录结构
         exp_dir = self._create_experiment_structure(dataset_name, task_type, downstream_model)
         exp_id = self._get_experiment_id(dataset_name, task_type, downstream_model)
@@ -135,6 +153,13 @@ class UnifiedBenchmark:
         # 参数默认值
         model_kwargs = model_kwargs or {}
         downstream_kwargs = downstream_kwargs or {}
+
+        random.seed(self.random_seed)
+        np.random.seed(self.random_seed)
+        torch.manual_seed(self.random_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.random_seed)
+            torch.cuda.manual_seed_all(self.random_seed)
         
         # 加载数据集
         print(f"加载数据集 {dataset_name} with {task_type} task...")
@@ -149,7 +174,10 @@ class UnifiedBenchmark:
             original_graph, train_mask, val_mask, test_mask = self.dataset_loader.load_dataset(
                 dataset_name, task_type=task_type)
 
-        original_graph = self.dataset_loader.preprocess_for_summarization(original_graph)
+        original_graph = self.dataset_loader.preprocess_for_summarization(
+            original_graph,
+            to_undirected_graph=not preserve_edge_direction
+        )
         
         input_dim = original_graph.x.size(1)
         print(f"图: {original_graph.num_nodes}节点, {original_graph.edge_index.shape[1]}边")
@@ -180,22 +208,12 @@ class UnifiedBenchmark:
         
         # 创建下游任务模型
         print(f"创建下游任务模型: {downstream_model}")
-        if downstream_model.lower() == 'gcn':
-            from ..models import GCNDownstreamModel
-            dt_model = GCNDownstreamModel(
-                input_dim=input_dim, 
-                device=self.device,
-                **downstream_kwargs
-            )
-        elif downstream_model.lower() == 'gat':
-            from ..models import GATDownstreamModel
-            dt_model = GATDownstreamModel(
-                input_dim=input_dim,
-                device=self.device, 
-                **downstream_kwargs
-            )
-        else:
-            raise ValueError(f"不支持的下游任务模型: {downstream_model}")
+        dt_model = create_downstream_model(
+            downstream_model,
+            input_dim=input_dim,
+            device=self.device,
+            **downstream_kwargs
+        )
         
         # 训练模型（如果是开发模型）
         training_time = 0
@@ -240,23 +258,12 @@ class UnifiedBenchmark:
 
                     # 创建下游任务模型工厂函数，确保训练和测试使用相同的模型
                     def downstream_model_factory():
-                        # 复制当前的下游任务模型配置
-                        if downstream_model.lower() == 'gcn':
-                            from ..models import GCNDownstreamModel
-                            return GCNDownstreamModel(
-                                input_dim=input_dim,
-                                device=self.device,
-                                **downstream_kwargs
-                            )
-                        elif downstream_model.lower() == 'gat':
-                            from ..models import GATDownstreamModel
-                            return GATDownstreamModel(
-                                input_dim=input_dim,
-                                device=self.device,
-                                **downstream_kwargs
-                            )
-                        else:
-                            raise ValueError(f"不支持的下游任务模型: {downstream_model}")
+                        return create_downstream_model(
+                            downstream_model,
+                            input_dim=input_dim,
+                            device=self.device,
+                            **downstream_kwargs
+                        )
 
                     # 包装模型使其可训练，传入相同的下游模型工厂
                     trainable_model = TrainableGraphSummarizationModel(
@@ -283,6 +290,15 @@ class UnifiedBenchmark:
             except Exception as e:
                 print(f"❌ 模型训练失败: {e}")
                 return {'error': f'Training failed: {e}'}
+
+        # Some non-learned gradient-based variants still require benchmark masks/labels
+        # to be attached before calling summarize.
+        if hasattr(gs_model, 'train_mask') and getattr(gs_model, 'train_mask', None) is None:
+            gs_model.train_mask = train_mask
+        if hasattr(gs_model, 'val_mask') and getattr(gs_model, 'val_mask', None) is None:
+            gs_model.val_mask = val_mask
+        if hasattr(gs_model, 'labels') and getattr(gs_model, 'labels', None) is None:
+            gs_model.labels = original_graph.y
         
         # 生成总结图
         print(f"📊 生成{num_steps+1}个总结图...")
@@ -340,73 +356,55 @@ class UnifiedBenchmark:
         if adaptive_epochs != epochs:
             print(f"⚡ 为节约内存，减少训练轮数: {epochs} -> {adaptive_epochs}")
 
-        # 计算两种归一化的信息度量
-        info_metrics_log = None
-        info_metrics_add = None
+        print("📊 单次训练同时计算 test loss 与 accuracy...")
+        test_losses, accuracy_metrics = info_metric.evaluate_list(
+            summary_graphs,
+            train_mask,
+            val_mask,
+            test_mask,
+            original_graph.y,
+            epochs=adaptive_epochs,
+        )
 
-        try:
-            print("📊 计算对数比率归一化信息度量...")
-            info_metrics_log = info_metric.compute_list(
-                summary_graphs, train_mask, val_mask, test_mask,
-                original_graph.y, epochs=adaptive_epochs, normalization='log_ratio'
+        test_labels = original_graph.y[test_mask].detach().cpu().long()
+        majority_accuracy = (
+            torch.bincount(test_labels).max().item() / test_labels.numel()
+        )
+        original_accuracy = accuracy_metrics[0]
+        empty_accuracy = accuracy_metrics[-1]
+        print(
+            f"🧪 evaluator sanity: original_acc={original_accuracy:.4f}, "
+            f"empty_acc={empty_accuracy:.4f}, majority_acc={majority_accuracy:.4f}, "
+            f"original_loss={test_losses[0]:.4f}, empty_loss={test_losses[-1]:.4f}"
+        )
+
+        if min_original_accuracy is not None and original_accuracy < min_original_accuracy:
+            raise RuntimeError(
+                f"Invalid downstream evaluation: original graph accuracy "
+                f"{original_accuracy:.4f} < required {min_original_accuracy:.4f}"
+            )
+        required_majority_accuracy = majority_accuracy + min_accuracy_over_majority
+        if original_accuracy <= required_majority_accuracy:
+            raise RuntimeError(
+                f"Invalid downstream evaluation: original graph accuracy "
+                f"{original_accuracy:.4f} does not exceed majority baseline "
+                f"{majority_accuracy:.4f} by {min_accuracy_over_majority:.4f}"
+            )
+        if require_informative_reference and test_losses[0] >= test_losses[-1]:
+            print(
+                f"⚠️ information reference warning: original graph loss "
+                f"{test_losses[0]:.4f} >= empty graph loss {test_losses[-1]:.4f}; "
+                "continuing evaluation"
             )
 
-            print("📊 计算加法归一化信息度量...")
-            # Reset model for different normalization calculation
-            info_metric_add = InformationMetric(dt_model, self.device, random_seed=self.random_seed)
-            info_metrics_add = info_metric_add.compute_list(
-                summary_graphs, train_mask, val_mask, test_mask,
-                original_graph.y, epochs=adaptive_epochs, normalization='additive'
-            )
-
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                print(f"❌ 信息度量计算失败: CUDA内存不足")
-                print(f"尝试进一步减少训练轮数...")
-                # Try with even fewer epochs
-                emergency_epochs = max(adaptive_epochs // 2, 10)
-                print(f"🚨 紧急模式: 使用 {emergency_epochs} 轮训练")
-
-                info_metrics_log = info_metric.compute_list(
-                    summary_graphs, train_mask, val_mask, test_mask,
-                    original_graph.y, epochs=emergency_epochs, normalization='log_ratio'
-                )
-
-                info_metric_add = InformationMetric(dt_model, self.device, random_seed=self.random_seed)
-                info_metrics_add = info_metric_add.compute_list(
-                    summary_graphs, train_mask, val_mask, test_mask,
-                    original_graph.y, epochs=emergency_epochs, normalization='additive'
-                )
-            else:
-                raise e
+        info_metrics_log = InformationMetric.normalize_losses(
+            test_losses, normalization='log_ratio'
+        )
+        info_metrics_add = InformationMetric.normalize_losses(
+            test_losses, normalization='additive'
+        )
 
         self._log_memory_usage("After information metric computation")
-
-        # 计算Accuracy度量
-        print("🎯 计算Accuracy度量...")
-        accuracy_metrics = None
-        try:
-            accuracy_metric = AccuracyMetric(dt_model, self.device, random_seed=self.random_seed)
-            accuracy_metrics = accuracy_metric.compute_list(
-                summary_graphs, train_mask, val_mask, test_mask,
-                original_graph.y, epochs=adaptive_epochs
-            )
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                print(f"❌ Accuracy度量计算失败: CUDA内存不足")
-                print(f"尝试进一步减少训练轮数...")
-                emergency_epochs = max(adaptive_epochs // 2, 10)
-                print(f"🚨 紧急模式: 使用 {emergency_epochs} 轮训练")
-
-                accuracy_metric = AccuracyMetric(dt_model, self.device, random_seed=self.random_seed)
-                accuracy_metrics = accuracy_metric.compute_list(
-                    summary_graphs, train_mask, val_mask, test_mask,
-                    original_graph.y, epochs=emergency_epochs
-                )
-            else:
-                raise e
-
-        self._log_memory_usage("After accuracy metric computation")
 
         # 计算IC-AUC和信息阈值点 (使用两种归一化)
         from ..metrics import ICAnalysis
@@ -431,12 +429,15 @@ class UnifiedBenchmark:
             'downstream_model': downstream_model,
             'num_steps': num_steps,
             'epochs': epochs,
+            'preserve_edge_direction': preserve_edge_direction,
             'complexity_metrics': complexity_metrics,
             # 双重归一化信息度量
             'information_metrics_log_ratio': info_metrics_log,
             'information_metrics_additive': info_metrics_add,
+            'test_losses': test_losses,
             # Accuracy度量
             'accuracy_metrics': accuracy_metrics,
+            'majority_accuracy': majority_accuracy,
             # IC-AUC指标（两种归一化）
             'ic_auc_log_ratio': ic_auc_log,
             'ic_auc_additive': ic_auc_add,
@@ -464,14 +465,15 @@ class UnifiedBenchmark:
         print("测试结果")
         print(f"{'='*80}")
         print(f"模型: {model_name} ({model_info['category']})")
-        print(f"SNR-AUC: {snr_auc:.4f}")
+        print(f"IC-AUC(additive): {ic_auc_add:.4f}")
+        print(f"IC-AUC(log-ratio): {ic_auc_log:.4f}")
         print(f"复杂度指标: {[f'{x:.0f}' for x in complexity_metrics]}")
         print(f"信息指标(log): {[f'{x:.4f}' for x in info_metrics_log]}")
         print(f"信息指标(add): {[f'{x:.4f}' for x in info_metrics_add]}")
         if accuracy_metrics is not None:
             print(f"准确度指标: {[f'{x:.4f}' for x in accuracy_metrics]}")
 
-        # 生成单个模型的SNR曲线图（保存到实验目录）
+        # 生成单个模型的 IC 曲线图（保存到实验目录）
         self._plot_single_model_enhanced(result)
         
         # Final memory cleanup
@@ -486,7 +488,9 @@ class UnifiedBenchmark:
                       task_type: str = 'original',
                       downstream_model: str = 'gcn',
                       num_steps: int = 10,
-                      epochs: int = 100) -> Dict[str, Any]:
+                      epochs: int = 100,
+                      model_kwargs: Dict = None,
+                      downstream_kwargs: Dict = None) -> Dict[str, Any]:
         """
         比较多个模型的性能
 
@@ -497,6 +501,7 @@ class UnifiedBenchmark:
             downstream_model: 下游任务模型
             num_steps: 图总结步数
             epochs: 训练轮数
+            model_kwargs: 模型初始化参数
 
         Returns:
             包含所有模型结果的字典
@@ -505,6 +510,8 @@ class UnifiedBenchmark:
         print(f"模型比较: {len(model_names)} 个模型 on {dataset_name} ({task_type} task)")
         print(f"{'='*100}")
         print(f"模型列表: {', '.join(model_names)}")
+        model_kwargs = model_kwargs or {}
+        downstream_kwargs = downstream_kwargs or {}
         
         all_results = {}
         successful_results = []
@@ -512,7 +519,7 @@ class UnifiedBenchmark:
         for model_name in model_names:
             try:
                 # 对于需要特殊参数的模型，自动配置
-                model_kwargs = {}
+                current_model_kwargs = model_kwargs.copy()
                 
                 result = self.run_single_model(
                     model_name=model_name,
@@ -521,7 +528,8 @@ class UnifiedBenchmark:
                     downstream_model=downstream_model,
                     num_steps=num_steps,
                     epochs=epochs,
-                    model_kwargs=model_kwargs
+                    model_kwargs=current_model_kwargs,
+                    downstream_kwargs=downstream_kwargs
                 )
                 
                 all_results[model_name] = result
@@ -584,6 +592,7 @@ class UnifiedBenchmark:
         info_metrics_log = result.get('information_metrics_log_ratio', [])
         info_metrics_add = result.get('information_metrics_additive', [])
         accuracy_metrics = result.get('accuracy_metrics', [])
+        test_losses = result.get('test_losses', [])
 
         # 向后兼容：如果没有双重归一化数据，使用旧字段
         if not info_metrics_log and not info_metrics_add:
@@ -612,6 +621,9 @@ class UnifiedBenchmark:
         if accuracy_metrics and len(accuracy_metrics) == len(complexity_metrics):
             zip_data.append(accuracy_metrics)
             zip_names.append('accuracy')
+        if test_losses and len(test_losses) == len(complexity_metrics):
+            zip_data.append(test_losses)
+            zip_names.append('test_loss')
 
         for i, values in enumerate(zip(*zip_data)):
             step_dict = {
@@ -625,9 +637,12 @@ class UnifiedBenchmark:
                 'downstream_model': result['downstream_model']
             }
 
-            # 如果有accuracy数据，添加到字典中
-            if len(values) > 3:
-                step_dict['accuracy_metric'] = values[3]
+            value_index = 3
+            if 'accuracy' in zip_names:
+                step_dict['accuracy_metric'] = values[value_index]
+                value_index += 1
+            if 'test_loss' in zip_names:
+                step_dict['test_loss'] = values[value_index]
 
             step_data.append(step_dict)
 
@@ -804,120 +819,20 @@ class UnifiedBenchmark:
             print(f"⚠️ 原始图缺少标签信息，跳过图可视化")
             return
 
-        node_labels = original_graph.y.cpu().numpy()
-        unique_labels = np.unique(node_labels)
-        num_labels = len(unique_labels)
-
-        # 为不同标签分配颜色
-        if num_labels <= 10:
-            cmap = plt.cm.tab10
-        elif num_labels <= 20:
-            cmap = plt.cm.tab20
-        else:
-            cmap = plt.cm.hsv
-
-        label_colors = {}
-        for idx, label in enumerate(unique_labels):
-            label_colors[label] = cmap(idx % cmap.N)
-
-        # 获取accuracy metrics（如果存在）
-        accuracy_metrics = result.get('accuracy_metrics', None)
-
-        # 基于原始图计算固定的节点位置
         try:
-            original_nx = to_networkx(original_graph, to_undirected=True)
-
-            # 使用固定的随机种子确保布局一致性
-            np.random.seed(42)
-            fixed_pos = nx.spring_layout(original_nx, k=1, iterations=100, seed=42)
-
+            visualize_from_torch_summary_graphs(
+                summary_graphs=summary_graphs,
+                original_graph=original_graph,
+                output_dir=exp_dir / "graph_visualizations",
+                model_name=model_name,
+                accuracy_metrics=result.get('accuracy_metrics', None),
+                max_nodes=200,
+            )
         except Exception as e:
-            print(f"⚠️ 无法计算固定布局: {e}")
+            print(f"⚠️ 图可视化失败: {e}")
+            import traceback
+            traceback.print_exc()
             return
-
-        # 对每一步都进行可视化
-        num_steps = len(summary_graphs)
-        key_steps = list(range(num_steps))
-
-        for step in key_steps:
-            graph = summary_graphs[step]
-
-            try:
-                nx_graph = to_networkx(graph, to_undirected=True)
-
-                plt.figure(figsize=(12, 9))
-
-                # 使用固定位置
-                current_nodes = set(nx_graph.nodes())
-
-                # 准备按标签分组的节点
-                all_nodes = set(fixed_pos.keys())
-                connected_nodes = current_nodes
-                isolated_nodes = all_nodes - connected_nodes
-
-                # 绘制有连接的节点（按标签着色）
-                for label in unique_labels:
-                    # 找到属于该标签且有连接的节点
-                    label_connected_nodes = [
-                        node for node in connected_nodes
-                        if node < len(node_labels) and node_labels[node] == label
-                    ]
-
-                    if label_connected_nodes:
-                        label_pos = {node: fixed_pos[node] for node in label_connected_nodes}
-                        nx.draw_networkx_nodes(
-                            nx_graph, label_pos,
-                            nodelist=label_connected_nodes,
-                            node_size=50,
-                            node_color=[label_colors[label]],
-                            alpha=0.8,
-                            label=f'Label {int(label)}'
-                        )
-
-                # 绘制孤立节点（按标签着色，但更透明更小）
-                for label in unique_labels:
-                    label_isolated_nodes = [
-                        node for node in isolated_nodes
-                        if node < len(node_labels) and node_labels[node] == label
-                    ]
-
-                    if label_isolated_nodes:
-                        label_pos = {node: fixed_pos[node] for node in label_isolated_nodes}
-                        nx.draw_networkx_nodes(
-                            nx_graph, label_pos,
-                            nodelist=label_isolated_nodes,
-                            node_size=20,
-                            node_color=[label_colors[label]],
-                            alpha=0.3
-                        )
-
-                # 绘制边
-                if nx_graph.number_of_edges() > 0:
-                    current_pos = {node: pos for node, pos in fixed_pos.items() if node in current_nodes}
-                    nx.draw_networkx_edges(nx_graph, current_pos, alpha=0.4, width=0.8)
-
-                # 构建标题（包含accuracy信息）
-                title = f'Step {step}: {original_graph.num_nodes} nodes, {nx_graph.number_of_edges()} edges'
-                if accuracy_metrics is not None and step < len(accuracy_metrics):
-                    accuracy = accuracy_metrics[step]
-                    title += f', Accuracy: {accuracy:.4f}'
-
-                plt.title(title, fontsize=14)
-                plt.axis('off')
-
-                # 添加图例（显示标签颜色）
-                if num_labels <= 10:  # 只在标签数量不太多时显示图例
-                    plt.legend(loc='upper right', fontsize=9, framealpha=0.9)
-
-                # 保存图片
-                png_path = exp_dir / "graph_visualizations" / f"{model_name}_step_{step}_graph.png"
-                plt.savefig(png_path, dpi=150, bbox_inches='tight')
-                plt.close()
-
-            except Exception as e:
-                print(f"⚠️ 步骤 {step} 可视化失败: {e}")
-                import traceback
-                traceback.print_exc()
 
         print(f"🖼️ 图可视化保存到: {exp_dir / 'graph_visualizations'} (按标签着色，显示accuracy)")
 
@@ -1265,7 +1180,7 @@ class UnifiedBenchmark:
         print(f"\n{'='*100}")
         print(f"{dataset_name} + {downstream_model.upper()} 模型性能排名")
         print(f"{'='*100}")
-        print(f"{'排名':<4} {'模型':<20} {'类别':<12} {'SNR-AUC':<10} {'时间(s)':<8}")
+        print(f"{'排名':<4} {'模型':<20} {'类别':<12} {'IC-AUC':<10} {'时间(s)':<8}")
         print("-" * 60)
         
         for i, row in df_summary.iterrows():
@@ -1277,21 +1192,12 @@ class UnifiedBenchmark:
         
         # Define distinct markers for all development models
         development_markers = {
-            'learnable': ('o', '#1f77b4'),           # Circle, blue
-            'learnable_main': ('s', '#ff7f0e'),      # Square, orange
-            'learnable_gat': ('^', '#2ca02c'),       # Triangle up, green
-            'learnable_sage': ('v', '#d62728'),      # Triangle down, red
-            'learnable_no_step_emb': ('D', '#9467bd'), # Diamond, purple
-            'learnable_no_edge_diff': ('*', '#8c564b'), # Star, brown
-            'learnable_small_hidden': ('h', '#e377c2'), # Hexagon, pink
-            'learnable_large_hidden': ('p', '#7f7f7f'), # Pentagon, gray
-            'learnable_deep_gin': ('H', '#bcbd22'),   # Hexagon2, olive
-            'learnable_shallow_gin': ('+', '#17becf'), # Plus, cyan
-            'learnable_fixed_uniform': ('x', '#ff1744'), # X, deep red
-            'learnable_fixed_cosine': ('|', '#00e676'),  # Vline, light green
-            'learnable_dynamic_fw': ('_', '#3f51b5'),    # Hline, indigo
-            'learnable_dynamic_ugd': ('1', '#ff5722'),   # Tri_down, deep orange
             'gradient_based': ('*', '#FF6B35'),          # Star, bright orange - 基于梯度的模型
+            'neural_enhanced_main': ('o', '#1f77b4'),
+            'neural_enhanced_high_fusion': ('s', '#ff7f0e'),
+            'neural_enhanced_low_fusion': ('^', '#2ca02c'),
+            'neural_enhanced_no_residual': ('D', '#9467bd'),
+            'neural_enhanced_slow_gradient': ('P', '#17becf'),
         }
         
         # Define distinct markers for baseline models  
@@ -1346,7 +1252,7 @@ class UnifiedBenchmark:
                 linewidth=2,
                 markersize=8,
                 alpha=0.8,  # Add transparency for better visualization
-                label=f"{model_name} ({category}, AUC={snr_auc:.1f})"
+                label=f"{model_name} ({category}, IC-AUC={snr_auc:.1f})"
             )
         
         plt.xlabel('Complexity Metric (L0 Norm)', fontsize=12)
@@ -1362,7 +1268,7 @@ class UnifiedBenchmark:
         print(f"对比图保存到: {plot_path}")
     
     def _plot_single_model(self, result: Dict, dataset_name: str, downstream_model: str):
-        """为单个模型生成SNR曲线图"""
+        """为单个模型生成 IC 曲线图"""
         import matplotlib.pyplot as plt
         
         plt.figure(figsize=(10, 6))
@@ -1374,21 +1280,12 @@ class UnifiedBenchmark:
         
         # 定义图标和颜色
         development_markers = {
-            'learnable': ('o', '#1f77b4'),           # Circle, blue
-            'learnable_main': ('s', '#ff7f0e'),      # Square, orange
-            'learnable_gat': ('^', '#2ca02c'),       # Triangle up, green
-            'learnable_sage': ('v', '#d62728'),      # Triangle down, red
-            'learnable_no_step_emb': ('D', '#9467bd'), # Diamond, purple
-            'learnable_no_edge_diff': ('*', '#8c564b'), # Star, brown
-            'learnable_small_hidden': ('h', '#e377c2'), # Hexagon, pink
-            'learnable_large_hidden': ('p', '#7f7f7f'), # Pentagon, gray
-            'learnable_deep_gin': ('H', '#bcbd22'),   # Hexagon2, olive
-            'learnable_shallow_gin': ('+', '#17becf'), # Plus, cyan
-            'learnable_fixed_uniform': ('x', '#ff1744'), # X, deep red
-            'learnable_fixed_cosine': ('|', '#00e676'),  # Vline, light green
-            'learnable_dynamic_fw': ('_', '#3f51b5'),    # Hline, indigo
-            'learnable_dynamic_ugd': ('1', '#ff5722'),   # Tri_down, deep orange
             'gradient_based': ('*', '#FF6B35'),          # Star, bright orange - 基于梯度的模型
+            'neural_enhanced_main': ('o', '#1f77b4'),
+            'neural_enhanced_high_fusion': ('s', '#ff7f0e'),
+            'neural_enhanced_low_fusion': ('^', '#2ca02c'),
+            'neural_enhanced_no_residual': ('D', '#9467bd'),
+            'neural_enhanced_slow_gradient': ('P', '#17becf'),
         }
         
         baseline_markers = {
@@ -1416,7 +1313,7 @@ class UnifiedBenchmark:
         else:
             marker, color = '^', 'green'  # Default: triangle, green
         
-        # 绘制SNR曲线
+        # 绘制 IC 曲线
         plt.plot(
             complexity_metrics, 
             information_metrics, 
@@ -1424,13 +1321,13 @@ class UnifiedBenchmark:
             color=color,
             linewidth=2,
             markersize=8,
-            label=f"{model_name} (SNR-AUC: {result['snr_auc']:.2f})",
+            label=f"{model_name} (IC-AUC: {result['snr_auc']:.2f})",
             linestyle='--' if model_info['category'] == 'baseline' else '-'
         )
         
         plt.xlabel('Complexity Metric (Edge Count)', fontsize=12)
         plt.ylabel('Information Metric', fontsize=12)
-        plt.title(f'SNR Curve - {model_name} on {dataset_name} + {downstream_model.upper()}', fontsize=14)
+        plt.title(f'IC Curve - {model_name} on {dataset_name} + {downstream_model.upper()}', fontsize=14)
         plt.grid(True, alpha=0.3)
         plt.legend(fontsize=11)
         
@@ -1442,7 +1339,7 @@ class UnifiedBenchmark:
         plt.tight_layout()
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"📊 单模型SNR曲线图保存到: {plot_path}")
+        print(f"📊 单模型 IC 曲线图保存到: {plot_path}")
     
     def list_available_models(self) -> Dict[str, List[str]]:
         """列出所有可用的模型"""
@@ -1605,7 +1502,7 @@ class UnifiedBenchmark:
         best_by_task = df.loc[df.groupby(['dataset', 'task'])['snr_auc'].idxmax()]
         print("\n各任务最佳模型:")
         for _, row in best_by_task.iterrows():
-            print(f"  {row['dataset']} + {row['task']}: {row['model']} (SNR-AUC: {row['snr_auc']:.4f})")
+            print(f"  {row['dataset']} + {row['task']}: {row['model']} (IC-AUC: {row['snr_auc']:.4f})")
 
     def compute_comprehensive_results_from_process_data(self,
                                                        experiment_dir: str,
@@ -1613,8 +1510,8 @@ class UnifiedBenchmark:
         """
         单独的综合结果计算接口：根据已保存的过程结果计算综合结果
 
-        这个方法符合DEMAND.md的要求，用于在所有模型的过程结果都完成后，
-        单独计算综合结果（SNR曲线对比图和SNR-AUC表格）
+        这个方法用于在所有模型的过程结果都完成后，
+        单独计算综合结果（IC 曲线对比图和 IC-AUC 表格）
 
         Args:
             experiment_dir: 实验目录路径 (如 "results/comprehensive_benchmark/Cora_original_gcn")
@@ -1989,7 +1886,7 @@ class UnifiedBenchmark:
                             'training_time': result.get('training_time', 0),
                             'summarization_time': result.get('summarization_time', 0)
                         })
-                        print(f"✅ {model_name} on label {label_idx}: SNR-AUC = {result['snr_auc']:.4f}")
+                        print(f"✅ {model_name} on label {label_idx}: IC-AUC = {result['snr_auc']:.4f}")
                     else:
                         print(f"❌ {model_name} on label {label_idx} 测试失败")
 
@@ -2060,4 +1957,4 @@ class UnifiedBenchmark:
         best_by_label = df.loc[df.groupby('label_index')['snr_auc'].idxmax()]
         print(f"\n各标签任务最佳模型:")
         for _, row in best_by_label.iterrows():
-            print(f"  Label {row['label_index']}: {row['model']} (SNR-AUC: {row['snr_auc']:.4f})")
+            print(f"  Label {row['label_index']}: {row['model']} (IC-AUC: {row['snr_auc']:.4f})")

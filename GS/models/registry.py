@@ -1,7 +1,7 @@
 """
-模型注册机制
+Model Registration Mechanism
 
-提供统一的模型注册和管理功能，支持开发模型和baseline模型的统一管理。
+Provides unified model registration and management functionality, supporting unified management of development models and baseline models.
 """
 
 from typing import Dict, Type, List, Any
@@ -11,7 +11,7 @@ import importlib
 
 class ModelRegistry:
     """
-    统一的模型注册表，管理所有Graph Summarization模型。
+    Unified model registry, manages all Graph Summarization models.
     """
     
     def __init__(self):
@@ -19,23 +19,23 @@ class ModelRegistry:
         self._model_info: Dict[str, Dict[str, Any]] = {}
         self._register_builtin_models()
     
-    def register_model(self, 
-                      name: str, 
+    def register_model(self,
+                      name: str,
                       model_class: Type[GraphSummarizationModel],
                       category: str = "custom",
                       description: str = "",
                       paper_url: str = "",
                       **kwargs) -> None:
         """
-        注册Graph Summarization模型
-        
+        Register Graph Summarization model
+
         Args:
-            name: 模型名称（唯一标识）
-            model_class: 模型类（必须继承GraphSummarizationModel）
-            category: 模型分类 ("development", "baseline", "custom")
-            description: 模型描述
-            paper_url: 相关论文链接
-            **kwargs: 其他元信息
+            name: Model name (unique identifier)
+            model_class: Model class (must inherit from GraphSummarizationModel)
+            category: Model category ("development", "baseline", "custom")
+            description: Model description
+            paper_url: Related paper URL
+            **kwargs: Other metadata
         """
         if not issubclass(model_class, GraphSummarizationModel):
             raise ValueError(f"Model {name} must inherit from GraphSummarizationModel")
@@ -53,79 +53,121 @@ class ModelRegistry:
         }
     
     def get_model_class(self, name: str) -> Type[GraphSummarizationModel]:
-        """获取模型类"""
+        """Get model class"""
         if name not in self._models:
             raise ValueError(f"Model {name} not found. Available: {list(self._models.keys())}")
         return self._models[name]
-    
+
     def create_model(self, name: str, **kwargs) -> GraphSummarizationModel:
-        """创建模型实例"""
+        """Create model instance"""
         model_class = self.get_model_class(name)
         return model_class(**kwargs)
-    
+
     def list_models(self, category: str = None) -> List[str]:
-        """列出所有模型名称"""
+        """List all model names"""
         if category is None:
             return list(self._models.keys())
-        return [name for name, info in self._model_info.items() 
+        return [name for name, info in self._model_info.items()
                 if info.get("category") == category]
-    
+
     def get_model_info(self, name: str) -> Dict[str, Any]:
-        """获取模型信息"""
+        """Get model information"""
         if name not in self._model_info:
             raise ValueError(f"Model {name} not found")
         return self._model_info[name].copy()
-    
+
     def list_development_models(self) -> List[str]:
-        """列出开发模型"""
+        """List development models"""
         return self.list_models("development")
-    
+
     def list_baseline_models(self) -> List[str]:
-        """列出基准模型"""
+        """List baseline models"""
         return self.list_models("baseline")
     
     def _register_builtin_models(self):
-        """注册内置模型"""
-        # 旧的learnable模型已被neural_enhanced_gradient系列替代
-        # 如需使用旧模型，请直接从main_model导入
-        
+        """Register built-in models"""
+        # Old learnable models have been replaced by neural_enhanced_gradient series
+        # If you need to use old models, import directly from main_model
+
         try:
-            # 注册基于梯度的模型
-            from .gradient_based import GradientBasedGraphSummarization
+            # Register gradient-based model - use undirected graph version as default
+            from .gradient_based_undirected import (
+                GradientBasedUndirectedGraphSummarization,
+                JointSubsetBestGradientSummarization,
+                JointSubsetEdgeScoreGradientSummarization,
+                JointSubsetStabilityAwareEdgeScoreGradientSummarization,
+                JointSubsetProductImportanceGradientSummarization,
+                JointSubsetModelStableGradientSummarization,
+            )
 
             self.register_model(
                 "gradient_based",
-                GradientBasedGraphSummarization,
+                GradientBasedUndirectedGraphSummarization,
                 category="development",
-                description="基于梯度的图简化模型（开发模型2）"
+                description="IGPrune - Gradient-based undirected graph simplification model (Development Model 2)"
+            )
+
+            self.register_model(
+                "gradient_based_joint_subset_best",
+                JointSubsetBestGradientSummarization,
+                category="development",
+                description="IGPrune joint-subset variant - delete the sampled subset with minimum validation loss impact"
+            )
+
+            self.register_model(
+                "gradient_based_joint_edge_score",
+                JointSubsetEdgeScoreGradientSummarization,
+                category="development",
+                description="IGPrune joint-subset variant - aggregate sampled subset losses to edge scores"
+            )
+
+            self.register_model(
+                "gradient_based_joint_edge_score_stable",
+                JointSubsetStabilityAwareEdgeScoreGradientSummarization,
+                category="development",
+                description="IGPrune joint-subset variant - edge scores with stability penalty over sampled subsets"
+            )
+
+            self.register_model(
+                "gradient_based_joint_product_importance",
+                JointSubsetProductImportanceGradientSummarization,
+                category="development",
+                description="IGPrune joint-subset variant - product aggregation of GCN/GAT/GraphSAGE importance scores"
+            )
+
+            self.register_model(
+                "gradient_based_joint_model_stable",
+                JointSubsetModelStableGradientSummarization,
+                category="development",
+                description="INXplain(stable) - rank-mean edge scoring over GCN/GAT/GraphSAGE joint-subset deletion scores"
             )
 
         except ImportError as e:
             print(f"Warning: Could not register gradient-based model: {e}")
 
-        # Neural-Enhanced模型通过register_main_models.py注册
-        # 避免重复注册
+        # Neural-Enhanced models are registered via register_main_models.py
+        # Avoid duplicate registration
 
 
-# 全局模型注册表实例
+# Global model registry instance
 model_registry = ModelRegistry()
 
 
 def register_model(name: str, model_class: Type[GraphSummarizationModel], **kwargs):
-    """便捷函数：注册模型到全局注册表"""
+    """Convenience function: Register model to global registry"""
     model_registry.register_model(name, model_class, **kwargs)
 
 
 def get_model_class(name: str) -> Type[GraphSummarizationModel]:
-    """便捷函数：获取模型类"""
+    """Convenience function: Get model class"""
     return model_registry.get_model_class(name)
 
 
 def create_model(name: str, **kwargs) -> GraphSummarizationModel:
-    """便捷函数：创建模型实例"""
+    """Convenience function: Create model instance"""
     return model_registry.create_model(name, **kwargs)
 
 
 def list_all_models() -> List[str]:
-    """便捷函数：列出所有模型"""
+    """Convenience function: List all models"""
     return model_registry.list_models()

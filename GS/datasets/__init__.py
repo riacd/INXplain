@@ -1,7 +1,7 @@
 """
-数据集处理模块
+Dataset Processing Module
 
-该模块负责处理图数据集的加载、预处理和验证。
+This module handles loading, preprocessing, and validation of graph datasets.
 """
 
 from .loaders import DatasetLoader

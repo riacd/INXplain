@@ -1,8 +1,8 @@
 """
-主要的图总结模型实现
+Main Graph Summarization Model Implementation
 
-根据MODEL.md文档的详细规格实现LearnableGraphSummarization模型，
-包括完整的神经网络架构和训练策略。
+Implements the LearnableGraphSummarization model according to detailed specifications in MODEL.md,
+including complete neural network architecture and training strategies.
 """
 
 import torch
@@ -21,7 +21,7 @@ from .base import GraphSummarizationModel
 
 class GINLayer(nn.Module):
     """
-    GIN层实现，包含BatchNorm、ReLU和Dropout。
+    GIN layer implementation, including BatchNorm, ReLU and Dropout.
     """
     
     def __init__(self, 
@@ -52,7 +52,7 @@ class GINLayer(nn.Module):
 
 class EdgeScorer(nn.Module):
     """
-    边分类器MLP，输出每条边的移除概率。
+    Edge classifier MLP, outputs removal probability for each edge.
     """
     
     def __init__(self, input_dim: int, dropout: float = 0.2):
@@ -81,8 +81,8 @@ class EdgeScorer(nn.Module):
 
 class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
     """
-    可学习的图总结模型，完整实现MODEL.md中定义的架构。
-    
+    Learnable graph summarization model, fully implements the architecture defined in MODEL.md.
+
     Architecture:
     - Node Encoder: 3-layer GIN with hidden_dim=256
     - Step Embedding: Learnable lookup table with d_s=32
@@ -102,19 +102,19 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
                  use_edge_diff: bool = True,
                  **kwargs):
         """
-        初始化模型。
-        
+        Initialize the model.
+
         Args:
-            input_dim: 输入特征维度
-            hidden_dim: 隐藏层维度 (默认256)
-            step_emb_dim: 步骤嵌入维度 (默认32)
-            num_gin_layers: GIN层数 (默认3)
-            dropout: Dropout率 (默认0.2)
-            max_steps: 最大步数
-            device: 计算设备
-            node_encoder_type: 节点编码器类型
-            use_step_embedding: 是否使用步骤嵌入
-            use_edge_diff: 是否使用边差异特征
+            input_dim: Input feature dimension
+            hidden_dim: Hidden layer dimension (default 256)
+            step_emb_dim: Step embedding dimension (default 32)
+            num_gin_layers: Number of GIN layers (default 3)
+            dropout: Dropout rate (default 0.2)
+            max_steps: Maximum number of steps
+            device: Computing device
+            node_encoder_type: Node encoder type
+            use_step_embedding: Whether to use step embedding
+            use_edge_diff: Whether to use edge difference features
         """
         super().__init__()
         
@@ -129,36 +129,36 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
         self.use_step_embedding = use_step_embedding
         self.use_edge_diff = use_edge_diff
         
-        # 初始化节点编码器
+        # Initialize node encoder
         self._build_node_encoder()
-        
-        # 步骤嵌入
+
+        # Step embedding
         if self.use_step_embedding:
             self.step_embedding = nn.Embedding(max_steps + 1, step_emb_dim)
-        
-        # 边表示维度计算
+
+        # Edge representation dimension calculation
         edge_repr_dim = 2 * hidden_dim  # h_u + h_v
         if self.use_edge_diff:
             edge_repr_dim += hidden_dim  # |h_u - h_v|
         if self.use_step_embedding:
             edge_repr_dim += step_emb_dim  # step embedding
-            
-        # 边分类器
+
+        # Edge classifier
         self.edge_scorer = EdgeScorer(edge_repr_dim, dropout)
-        
-        # Xavier初始化
+
+        # Xavier initialization
         self._initialize_weights()
-        
-        # 确保模型参数都是float32类型
+
+        # Ensure all model parameters are float32 type
         self.float()
     
     def _build_node_encoder(self):
-        """构建节点编码器"""
+        """Build node encoder"""
         if self.node_encoder_type == 'gin':
-            # 输入投影层
+            # Input projection layer
             self.input_projection = nn.Linear(self.input_dim, self.hidden_dim)
-            
-            # GIN层
+
+            # GIN layers
             self.gin_layers = nn.ModuleList([
                 GINLayer(
                     input_dim=self.hidden_dim,
@@ -191,7 +191,7 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
             raise ValueError(f"Unsupported encoder type: {self.node_encoder_type}")
     
     def _initialize_weights(self):
-        """Xavier uniform初始化"""
+        """Xavier uniform initialization"""
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
@@ -202,23 +202,23 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
     
     def encode_nodes(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """
-        节点编码。
-        
+        Node encoding.
+
         Args:
-            x: 节点特征 [n, d_in]
-            edge_index: 边索引 [2, num_edges]
-            
+            x: Node features [n, d_in]
+            edge_index: Edge index [2, num_edges]
+
         Returns:
-            节点嵌入 [n, d_h]
+            Node embeddings [n, d_h]
         """
-        # 确保输入是float32类型
+        # Ensure input is float32 type
         if x.dtype != torch.float32:
             x = x.float()
-        
-        # 输入投影
+
+        # Input projection
         h = self.input_projection(x)
-        
-        # 通过编码器层
+
+        # Through encoder layers
         if self.node_encoder_type == 'gin':
             for gin_layer in self.gin_layers:
                 h = gin_layer(h, edge_index)
@@ -233,116 +233,116 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
         
         return h
     
-    def compute_edge_features(self, 
+    def compute_edge_features(self,
                             node_embeddings: torch.Tensor,
                             edge_index: torch.Tensor,
                             step: int) -> torch.Tensor:
         """
-        计算边特征表示。
-        
+        Compute edge feature representations.
+
         Args:
-            node_embeddings: 节点嵌入 [n, d_h]
-            edge_index: 边索引 [2, num_edges]
-            step: 当前步骤
-            
+            node_embeddings: Node embeddings [n, d_h]
+            edge_index: Edge index [2, num_edges]
+            step: Current step
+
         Returns:
-            边特征 [num_edges, edge_feature_dim]
+            Edge features [num_edges, edge_feature_dim]
         """
         src_nodes, dst_nodes = edge_index[0], edge_index[1]
         h_u = node_embeddings[src_nodes]  # [num_edges, d_h]
         h_v = node_embeddings[dst_nodes]  # [num_edges, d_h]
-        
-        # 基本边特征: [h_u; h_v]
+
+        # Basic edge features: [h_u; h_v]
         edge_features = [h_u, h_v]
-        
-        # 差异特征: |h_u - h_v|
+
+        # Difference features: |h_u - h_v|
         if self.use_edge_diff:
             edge_diff = torch.abs(h_u - h_v)
             edge_features.append(edge_diff)
-        
-        # 步骤嵌入
+
+        # Step embedding
         if self.use_step_embedding:
-            step_tensor = torch.full((edge_index.size(1),), step, 
+            step_tensor = torch.full((edge_index.size(1),), step,
                                    dtype=torch.long, device=edge_index.device)
             step_emb = self.step_embedding(step_tensor)  # [num_edges, d_s]
             edge_features.append(step_emb)
-        
-        # 拼接所有特征
+
+        # Concatenate all features
         edge_repr = torch.cat(edge_features, dim=1)
         return edge_repr
     
-    def forward(self, 
+    def forward(self,
                 x: torch.Tensor,
                 edge_index: torch.Tensor,
                 step: int) -> torch.Tensor:
         """
-        前向传播。
-        
+        Forward propagation.
+
         Args:
-            x: 节点特征 [n, d_in]
-            edge_index: 边索引 [2, num_edges]
-            step: 当前步骤
-            
+            x: Node features [n, d_in]
+            edge_index: Edge index [2, num_edges]
+            step: Current step
+
         Returns:
-            边分数 [num_edges]
+            Edge scores [num_edges]
         """
-        # 确保数据类型一致性
+        # Ensure data type consistency
         if x.dtype != torch.float32:
             x = x.float()
-        
-        # 节点编码
+
+        # Node encoding
         node_embeddings = self.encode_nodes(x, edge_index)
-        
-        # 边特征计算
+
+        # Edge feature computation
         edge_features = self.compute_edge_features(node_embeddings, edge_index, step)
-        
-        # 边分类
+
+        # Edge classification
         edge_scores = self.edge_scorer(edge_features).squeeze(-1)
-        
+
         return edge_scores
     
     def summarize(self, original_graph: Data, num_steps: int = 10) -> List[Data]:
         """
-        生成图总结序列。
-        
+        Generate graph summary sequence.
+
         Args:
-            original_graph: 原始图
-            num_steps: 总结步数
-            
+            original_graph: Original graph
+            num_steps: Number of summary steps
+
         Returns:
-            总结图列表，包括原图在内共num_steps+1个图
+            Summary graph list, including original graph, total of num_steps+1 graphs
         """
         self.eval()
         summary_graphs = []
         current_graph = copy.deepcopy(original_graph)
-        
-        # Step 0: 原始图
+
+        # Step 0: Original graph
         summary_graphs.append(current_graph)
-        
+
         with torch.no_grad():
             for step in range(1, num_steps + 1):
                 if current_graph.edge_index.size(1) == 0:
-                    # 已经是空图，后续都是空图
+                    # Already empty graph, subsequent ones are all empty
                     empty_graph = Data(
                         x=original_graph.x,
-                        edge_index=torch.zeros((2, 0), dtype=torch.long, 
+                        edge_index=torch.zeros((2, 0), dtype=torch.long,
                                              device=original_graph.edge_index.device),
                         y=original_graph.y,
                         num_nodes=original_graph.x.size(0)
                     )
                     summary_graphs.append(empty_graph)
                     continue
-                
-                # 计算边分数
+
+                # Compute edge scores
                 edge_scores = self.forward(current_graph.x, current_graph.edge_index, step)
-                
-                # 确定保留边数
+
+                # Determine number of edges to keep
                 current_edges = current_graph.edge_index.size(1)
                 keep_ratio = 1.0 - (step / num_steps)
                 num_keep = max(0, int(current_edges * keep_ratio))
-                
+
                 if num_keep == 0:
-                    # 空图
+                    # Empty graph
                     empty_graph = Data(
                         x=original_graph.x,
                         edge_index=torch.zeros((2, 0), dtype=torch.long,
@@ -353,10 +353,10 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
                     summary_graphs.append(empty_graph)
                     current_graph = empty_graph
                 else:
-                    # 选择分数最高的边
+                    # Select edges with highest scores
                     _, top_indices = torch.topk(edge_scores, num_keep, largest=True)
                     kept_edge_index = current_graph.edge_index[:, top_indices]
-                    
+
                     next_graph = Data(
                         x=original_graph.x,
                         edge_index=kept_edge_index,
@@ -365,74 +365,74 @@ class LearnableGraphSummarization(GraphSummarizationModel, nn.Module):
                     )
                     summary_graphs.append(next_graph)
                     current_graph = next_graph
-        
+
         return summary_graphs
-    
+
     def reset(self) -> None:
-        """重置模型参数"""
+        """Reset model parameters"""
         self._initialize_weights()
 
 
-# 消融实验变体
+# Ablation experiment variants
 class LearnableGraphSummarization_GAT(LearnableGraphSummarization):
-    """使用GAT作为节点编码器的变体"""
-    
+    """Variant using GAT as node encoder"""
+
     def __init__(self, *args, **kwargs):
         kwargs['node_encoder_type'] = 'gat'
         super().__init__(*args, **kwargs)
 
 
 class LearnableGraphSummarization_SAGE(LearnableGraphSummarization):
-    """使用GraphSAGE作为节点编码器的变体"""
-    
+    """Variant using GraphSAGE as node encoder"""
+
     def __init__(self, *args, **kwargs):
         kwargs['node_encoder_type'] = 'sage'
         super().__init__(*args, **kwargs)
 
 
 class LearnableGraphSummarization_NoStepEmb(LearnableGraphSummarization):
-    """不使用步骤嵌入的变体"""
-    
+    """Variant without step embedding"""
+
     def __init__(self, *args, **kwargs):
         kwargs['use_step_embedding'] = False
         super().__init__(*args, **kwargs)
 
 
 class LearnableGraphSummarization_NoEdgeDiff(LearnableGraphSummarization):
-    """不使用边差异特征的变体"""
-    
+    """Variant without edge difference features"""
+
     def __init__(self, *args, **kwargs):
         kwargs['use_edge_diff'] = False
         super().__init__(*args, **kwargs)
 
 
 class LearnableGraphSummarization_SmallHidden(LearnableGraphSummarization):
-    """使用较小隐藏维度的变体"""
-    
+    """Variant with smaller hidden dimension"""
+
     def __init__(self, input_dim, *args, **kwargs):
         kwargs['hidden_dim'] = 128
         super().__init__(input_dim, *args, **kwargs)
 
 
 class LearnableGraphSummarization_LargeHidden(LearnableGraphSummarization):
-    """使用较大隐藏维度的变体"""
-    
+    """Variant with larger hidden dimension"""
+
     def __init__(self, input_dim, *args, **kwargs):
         kwargs['hidden_dim'] = 512
         super().__init__(input_dim, *args, **kwargs)
 
 
 class LearnableGraphSummarization_DeepGIN(LearnableGraphSummarization):
-    """使用更深GIN网络的变体"""
-    
+    """Variant with deeper GIN network"""
+
     def __init__(self, *args, **kwargs):
         kwargs['num_gin_layers'] = 5
         super().__init__(*args, **kwargs)
 
 
 class LearnableGraphSummarization_ShallowGIN(LearnableGraphSummarization):
-    """使用较浅GIN网络的变体"""
-    
+    """Variant with shallower GIN network"""
+
     def __init__(self, *args, **kwargs):
         kwargs['num_gin_layers'] = 2
         super().__init__(*args, **kwargs)

@@ -1,14 +1,14 @@
 """
-度量模块
+Metrics Module
 
-提供用于评估图总结模型性能的各种度量指标。
+Provides various metrics for evaluating graph pruning model performance.
 
-包含：
-- ComplexityMetric: 计算图复杂度（边数）
-- InformationMetric: 计算信息保留度量（支持双重归一化）
-- AccuracyMetric: 计算下游任务准确度
-- ICAnalysis: 计算IC-AUC和信息阈值点等分析指标
-- SNRAnalysis: 旧版名称，向后兼容
+Contains:
+- ComplexityMetric: Compute graph complexity (edge count)
+- InformationMetric: Compute information preservation metrics (supports dual normalization)
+- AccuracyMetric: Compute downstream task accuracy
+- ICAnalysis: Compute IC-AUC and information threshold analysis metrics
+- SNRAnalysis: compatibility alias for older scripts
 """
 
 from .core import ComplexityMetric, InformationMetric, AccuracyMetric, ICAnalysis, SNRAnalysis

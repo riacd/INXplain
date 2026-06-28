@@ -1,25 +1,25 @@
 """
-模型模块
+Models Module
 
-包含Neural-Enhanced图总结模型和相关组件的实现。
+Contains implementations of Neural-Enhanced graph summarization models and related components.
 
-模块结构：
-- base: 抽象基类定义
-- neural_enhanced_gradient: Neural-Enhanced图总结模型及其变体
-- gradient_based: 基础梯度法模型
-- downstream: 下游任务模型实现
-- registry: 统一的模型注册机制
+Module Structure:
+- base: Abstract base class definitions
+- neural_enhanced_gradient: Neural-Enhanced graph summarization model and its variants
+- gradient_based: Basic gradient-based model
+- downstream: Downstream task model implementations
+- registry: Unified model registration mechanism
 
-消融实验变体分类：
-1. 融合权重变体（高融合、低融合等）
-2. 学习策略变体（残差学习、直接融合等）
-3. 计算精度变体（快速计算、精确计算等）
+Ablation Experiment Variant Categories:
+1. Fusion weight variants (high fusion, low fusion, etc.)
+2. Learning strategy variants (residual learning, direct fusion, etc.)
+3. Computational precision variants (fast computation, exact computation, etc.)
 """
 
-# 基类
+# Base classes
 from .base import GraphSummarizationModel, DownstreamModel
 
-# Neural-Enhanced图总结模型及其变体
+# Neural-Enhanced graph summarization model and its variants
 from .neural_enhanced_gradient import (
     NeuralEnhancedGradientModel,
     NeuralEnhancedGradientModel_HighFusion,
@@ -30,18 +30,36 @@ from .neural_enhanced_gradient import (
     EdgeImportanceRefiner
 )
 
-# 基础梯度法模型
+# Basic gradient-based model
 from .gradient_based import GradientBasedGraphSummarization
 
-# 下游任务模型
+# Downstream task models
 from .downstream import (
     GCNDownstreamModel,
     GATDownstreamModel,
+    GraphSAGEDownstreamModel,
+    H2GCNDownstreamModel,
+    GCNIIDownstreamModel,
+    create_downstream_model,
+    normalize_downstream_model_name,
     GCNModel,
-    GATModel
+    GATModel,
+    GraphSAGEModel,
+    H2GCNPyTorchModel,
+    GCNIIModel,
 )
 
-# 模型注册机制
+# Gradient-based undirected variants
+from .gradient_based_undirected import (
+    GradientBasedUndirectedGraphSummarization,
+    JointSubsetBestGradientSummarization,
+    JointSubsetEdgeScoreGradientSummarization,
+    JointSubsetStabilityAwareEdgeScoreGradientSummarization,
+    JointSubsetProductImportanceGradientSummarization,
+    JointSubsetModelStableGradientSummarization,
+)
+
+# Model registration mechanism
 from .registry import (
     model_registry,
     register_model,
@@ -50,15 +68,15 @@ from .registry import (
     list_all_models
 )
 
-# 自动注册所有模型
+# Automatically register all models
 try:
-    # 注册主要模型变体
+    # Register main model variants
     from .register_main_models import register_all_main_models
     register_all_main_models()
 except ImportError:
-    pass  # 注册失败时静默失败
+    pass  # Fail silently if registration fails
 
-# 注册baseline模型
+# Register baseline models
 try:
     import sys
     import os
@@ -66,14 +84,14 @@ try:
     from baselines.register_baselines import register_all_baselines
     register_all_baselines()
 except ImportError:
-    pass  # baseline模块不可用时静默失败
+    pass  # Fail silently if baseline module is unavailable
 
 __all__ = [
-    # 基类
+    # Base classes
     'GraphSummarizationModel',
     'DownstreamModel',
 
-    # Neural-Enhanced图总结模型及其变体
+    # Neural-Enhanced graph summarization model and its variants
     'NeuralEnhancedGradientModel',
     'NeuralEnhancedGradientModel_HighFusion',
     'NeuralEnhancedGradientModel_LowFusion',
@@ -82,16 +100,30 @@ __all__ = [
     'TrainableNeuralEnhancedGradientModel',
     'EdgeImportanceRefiner',
 
-    # 基础梯度法模型
+    # Basic gradient-based model
     'GradientBasedGraphSummarization',
+    'GradientBasedUndirectedGraphSummarization',
+    'JointSubsetBestGradientSummarization',
+    'JointSubsetEdgeScoreGradientSummarization',
+    'JointSubsetStabilityAwareEdgeScoreGradientSummarization',
+    'JointSubsetProductImportanceGradientSummarization',
+    'JointSubsetModelStableGradientSummarization',
 
-    # 下游任务模型
+    # Downstream task models
     'GCNDownstreamModel',
     'GATDownstreamModel',
+    'GraphSAGEDownstreamModel',
+    'H2GCNDownstreamModel',
+    'GCNIIDownstreamModel',
+    'create_downstream_model',
+    'normalize_downstream_model_name',
     'GCNModel',
     'GATModel',
+    'GraphSAGEModel',
+    'H2GCNPyTorchModel',
+    'GCNIIModel',
 
-    # 模型注册机制
+    # Model registration mechanism
     'model_registry',
     'register_model',
     'get_model_class',

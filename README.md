@@ -1,103 +1,137 @@
 # IGPrune: Information-Guided Graph Pruning
 
-Official PyTorch implementation of **"IGPrune: Information-Guided Graph Pruning"** (WWW 2026).
+This repository contains the source code for the IGPrune graph pruning experiments, including the proposed gradient-based method and baseline integrations. The benchmark evaluates how much downstream node-classification information is retained as graph complexity is reduced.
 
-## Overview
+## Repository Layout
 
-IGPrune is a framework for graph pruning that progressively removes edges while preserving task-relevant information.
+```text
+GS/
+  models/        IGPrune models, downstream GNNs, and model registry
+  datasets/      dataset loading, preprocessing, and task label generation
+  benchmark/     unified benchmark orchestration
+  metrics/       complexity, information retention, accuracy, and IC-AUC metrics
+  utils/         summary-graph export and visualization helpers
+baselines/       NetworKit, PRI-Graphs, and SparRL baseline integrations
+scripts/         experiment entrypoints and result aggregation scripts
+tests/           regression and behavior tests
+third_party/     vendored baseline model code used by experiments
+```
+
+Local datasets, checkpoints, logs, generated figures, paper drafts, and result files are intentionally excluded from git.
 
 ## Installation
 
+The code was developed with Python 3.9, PyTorch, and PyTorch Geometric. Install the Python dependencies with:
+
 ```bash
-# Create environment
-conda create -n IGPrune python=3.9
-conda activate IGPrune
-
-# Install dependencies
-pip install torch torch-geometric numpy matplotlib pandas networkx scikit-learn
+conda create -n GS python=3.9
+conda activate GS
+pip install -r requirements.txt
 ```
 
-## Quick Start
+Some baselines and datasets require optional packages such as `networkit` or `ogb`. Install them when running the corresponding experiments.
 
-```python
-from GS.datasets import DatasetLoader
-from GS.models import model_registry
-from GS.benchmark import UnifiedBenchmark
+## Main Reproduction Commands
 
-# Load dataset
-loader = DatasetLoader('./data')
-data, train_mask, val_mask, test_mask = loader.load_dataset('Cora')
+List available registered models:
 
-# Create model
-model = model_registry.create_model(
-    'learnable_graph_summarization',
-    input_dim=data.x.size(1),
-    device='cuda'
-)
-
-# Run benchmark
-benchmark = UnifiedBenchmark(device='cuda')
-results = benchmark.test_model(
-    model_name='learnable_graph_summarization',
-    dataset_name='Cora',
-    task_type='original',
-    downstream_model='gcn'
-)
+```bash
+python scripts/run_unified_benchmark.py --list-models
 ```
 
-## Project Structure
+Run a single IGPrune benchmark:
 
-```
-IGPrune/
-├── GS/                     # Main package
-│   ├── models/            # Graph pruning models
-│   ├── datasets/          # Dataset loaders
-│   ├── benchmark/         # Benchmark framework
-│   └── metrics/           # Evaluation metrics
-├── baselines/             # Baseline implementations
-├── scripts/               # Experiment scripts
-├── data/                  # Datasets
-└── results/               # Experiment results
+```bash
+python scripts/run_unified_benchmark.py \
+  --model gradient_based \
+  --dataset Cora \
+  --task original \
+  --downstream gcn \
+  --num-steps 10 \
+  --epochs 30 \
+  --device cuda
 ```
 
-## Models
-- **IGPrune**: Baseline using validation loss gradients
-- **NetworKit Methods**: Random, degree-based, centrality-based pruning
-- **PRI-Graphs**: Probabilistic graph simplification
+Run a multi-model benchmark against baselines:
 
-## Datasets
-
-**Citation Networks**: Cora, CiteSeer, PubMed
-**Social Networks**: Karate Club
-**Biological Networks**: SO_relation (ME/MT)
-
-## Running Experiments
-
-# Run benchmark
-python scripts/run_unified_benchmark.py --model learnable_graph_summarization --dataset Cora
-
-# Run comprehensive experiments
-python scripts/run_multi_dataset_repeated_experiments.py --datasets Cora CiteSeer PubMed
+```bash
+python scripts/comprehensive_benchmark.py \
+  --model-group gradient_and_baselines \
+  --dataset-group citation \
+  --task-group all \
+  --downstream gcn \
+  --steps 10 \
+  --epochs 30 \
+  --device cuda \
+  --results-dir ./results/comprehensive_benchmark
 ```
 
-## Evaluation Metrics
+Run repeated experiments across datasets:
 
-- **Complexity Metric**: Normalized edge count
-- **Information Metric**: Task-relevant information preservation
-- **IC-AUC**: Area under Information-Complexity curve
-- **Accuracy**: Downstream task performance
-
-## Citation
-
-```bibtex
-@inproceedings{igprune2025,
-  title={IGPrune: Information-Guided Graph Pruning},
-  author={Your Name},
-  booktitle={WWW},
-  year={2025}
-}
+```bash
+python scripts/run_multi_dataset_repeated_experiments.py \
+  --models gradient_based networkit_random_edge networkit_local_degree pri_graphs \
+  --datasets Cora CiteSeer PubMed KarateClub \
+  --task original \
+  --downstream gcn \
+  --num-repeats 5 \
+  --num-steps 10 \
+  --epochs 30 \
+  --device cuda
 ```
 
-## License
+Run the GNN ablation entrypoint:
 
-MIT License
+```bash
+python scripts/run_inxplain_gnn_ablation.py \
+  --dataset Cora \
+  --task original \
+  --scoring-model gcn \
+  --downstream gcn \
+  --device cuda
+```
+
+## Models and Tasks
+
+Main model identifiers:
+
+- `gradient_based`: default IGPrune gradient-based undirected graph pruning model.
+- `gradient_based_original`: original directed-edge deletion variant kept for comparison.
+- `gradient_based_undirected`: explicit undirected variant.
+- `neural_enhanced_main`: neural-enhanced gradient variant.
+- `networkit_*`: NetworKit sparsification baselines.
+- `pri_graphs`: PRI-Graphs baseline.
+
+Common datasets:
+
+- Citation networks: `Cora`, `CiteSeer`, `PubMed`
+- Small graph: `KarateClub`
+- Academic network: `WikiCS`
+- OGB datasets such as `ogbn-arxiv` when `ogb` is installed
+- Custom local datasets such as `SO_relation_ME`, `SO_relation_MT`, `HongL`, and `XYH` when the required files exist under `data/`
+
+Supported task labels include `original`, `degree`, `degree_centrality`, `pagerank`, and `closeness_centrality`. Supported downstream models include `gcn` and `gat`, with additional GNN variants used by the ablation scripts.
+
+## Outputs
+
+Benchmark outputs are written under `results/` by default. Important reported quantities include:
+
+- Complexity: normalized edge count.
+- Information: downstream task information retention.
+- IC-AUC: area under the information-complexity curve.
+- Information threshold: minimum complexity needed to retain a target information level.
+- Accuracy: downstream node classification accuracy.
+- Runtime: graph pruning and downstream training time.
+
+Generated outputs are ignored by git so experiments can be rerun without polluting the source tree.
+
+## Tests
+
+Run focused tests before publishing changes:
+
+```bash
+python baselines/tests/test_pri_graphs_simple.py
+python baselines/tests/test_networkit_baselines.py --method random_edge --dataset Cora
+python -m unittest discover baselines/SparRL/tests
+python -m pytest tests
+```

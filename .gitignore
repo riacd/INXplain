@@ -1,0 +1,76 @@
+# Local datasets and generated experiment artifacts
+data/
+GS/data/
+results/
+ckpt/
+checkpoints/
+logs/
+wandb/
+runtime/
+outputs/
+tmp/
+
+# Python caches and build outputs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Cluster job logs and runtime logs
+*.o[0-9]*
+*.e[0-9]*
+*.out
+*.err
+*.fs.out
+*.fs.err
+*.log
+
+# Open-source release keeps a single reproduction README
+*.md
+!/README.md
+docs/
+doc/
+
+# Paper drafts, notebooks, figures, and analysis exports
+*.tex
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.eps
+*.html
+*.ipynb
+.ipynb_checkpoints/
+*.csv
+*.tsv
+*.xlsx
+*.jsonl
+
+# Model checkpoints and serialized intermediate data
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.pickle
+*.npy
+*.npz
+
+# Local HPC submission scripts
+*.pbs
+
+# OS and local tool state
+.DS_Store
+.claude/
+.codex
+.agents/

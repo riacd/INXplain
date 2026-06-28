@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import math
 import gc
+import random
 from abc import ABC, abstractmethod
 
 
@@ -85,6 +86,44 @@ class InformationMetric:
         self.downstream_model = downstream_model
         self.device = device if device is not None else torch.device('cpu')
         self.random_seed = random_seed
+
+    def _set_random_seed(self) -> None:
+        """Use paired initialization and training randomness for every graph."""
+        random.seed(self.random_seed)
+        np.random.seed(self.random_seed)
+        torch.manual_seed(self.random_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.random_seed)
+            torch.cuda.manual_seed_all(self.random_seed)
+
+    @staticmethod
+    def normalize_losses(test_losses: List[float], normalization: str) -> List[float]:
+        """Normalize precomputed losses without retraining downstream models."""
+        if normalization not in {'additive', 'log_ratio'}:
+            raise ValueError(f"Unknown information normalization: {normalization}")
+        if not test_losses:
+            return []
+
+        l_g0 = test_losses[0]
+        l_gn = test_losses[-1]
+        if normalization == 'additive':
+            denominator = l_gn - l_g0
+            if abs(denominator) <= 1e-10:
+                raise ValueError(
+                    "Cannot normalize information: original and empty graphs have "
+                    "indistinguishable test losses"
+                )
+            return [(l_gn - loss) / denominator for loss in test_losses]
+
+        if l_g0 <= 0 or l_gn <= 0 or any(loss <= 0 for loss in test_losses):
+            raise ValueError("Log-ratio information requires strictly positive losses")
+        denominator = math.log(l_g0 / l_gn)
+        if abs(denominator) <= 1e-10:
+            raise ValueError(
+                "Cannot normalize information: original and empty graphs have "
+                "indistinguishable test losses"
+            )
+        return [math.log(loss / l_gn) / denominator for loss in test_losses]
     
     def compute(self,
                 graph: Data,
@@ -137,6 +176,83 @@ class InformationMetric:
         del graph_copy, train_mask, val_mask, test_mask, labels
 
         return float(test_loss)
+
+    def compute_metrics(self,
+                        graph: Data,
+                        train_mask: torch.Tensor,
+                        val_mask: torch.Tensor,
+                        test_mask: torch.Tensor,
+                        labels: torch.Tensor,
+                        epochs: int = 200) -> Tuple[float, float]:
+        """Train once and return both test loss and test accuracy."""
+        with torch.no_grad():
+            graph_copy = Data(
+                x=graph.x.clone().float().to(self.device),
+                edge_index=graph.edge_index.clone().to(self.device),
+                y=graph.y.clone().to(self.device)
+                if hasattr(graph, 'y') and graph.y is not None else None,
+            )
+            train_mask_copy = train_mask.clone().to(self.device)
+            val_mask_copy = val_mask.clone().to(self.device)
+            test_mask_copy = test_mask.clone().to(self.device)
+            labels_copy = labels.clone().to(self.device)
+
+        self.downstream_model.train_model(
+            graph_copy,
+            train_mask_copy,
+            val_mask_copy,
+            labels_copy,
+            epochs=epochs,
+        )
+        test_loss = self.downstream_model.evaluate(
+            graph_copy, test_mask_copy, labels_copy
+        )
+        with torch.no_grad():
+            predictions = self.downstream_model.predict(graph_copy)
+            accuracy = (
+                predictions[test_mask_copy].argmax(dim=1)
+                == labels_copy[test_mask_copy]
+            ).float().mean().item()
+
+        del graph_copy, train_mask_copy, val_mask_copy, test_mask_copy, labels_copy
+        return float(test_loss), float(accuracy)
+
+    def evaluate_list(self,
+                      summary_graph_list: List[Data],
+                      train_mask: torch.Tensor,
+                      val_mask: torch.Tensor,
+                      test_mask: torch.Tensor,
+                      labels: torch.Tensor,
+                      epochs: int = 200) -> Tuple[List[float], List[float]]:
+        """Evaluate all graph steps with paired randomness and one fit per step."""
+        test_losses = []
+        accuracies = []
+        for i, graph in enumerate(summary_graph_list):
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Every step receives the same initialization and dropout RNG stream.
+            self._set_random_seed()
+            self.downstream_model.reset()
+            try:
+                test_loss, accuracy = self.compute_metrics(
+                    graph, train_mask, val_mask, test_mask, labels, epochs
+                )
+            except RuntimeError as exc:
+                if "out of memory" in str(exc).lower():
+                    raise RuntimeError(
+                        f"CUDA OOM while evaluating graph step {i}; refusing to "
+                        "change epochs for only one step"
+                    ) from exc
+                raise
+
+            test_losses.append(test_loss)
+            accuracies.append(accuracy)
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        return test_losses, accuracies
     
     def compute_list(self,
                      summary_graph_list: List[Data],
@@ -164,97 +280,15 @@ class InformationMetric:
         Returns:
             List[float]: Information metrics for each graph using specified normalization
         """
-        # First compute test losses for all graphs
-        test_losses = []
-        for i, graph in enumerate(summary_graph_list):
-            # Memory management: Clear CUDA cache before each computation
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            # Set random seed for consistent initialization across different GS models
-            # Use index-based seed offset to ensure different initialization for each step
-            step_seed = self.random_seed + i * 1000
-            torch.manual_seed(step_seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed(step_seed)
-                torch.cuda.manual_seed_all(step_seed)
-
-            # Reset model for each graph evaluation with consistent seed
-            self.downstream_model.reset()
-
-            try:
-                test_loss = self.compute(
-                    graph, train_mask, val_mask, test_mask, labels, epochs
-                )
-                test_losses.append(test_loss)
-            except RuntimeError as e:
-                if "out of memory" in str(e).lower():
-                    print(f"⚠️ CUDA OOM at step {i}, trying with reduced epochs...")
-                    # Try with reduced epochs
-                    reduced_epochs = max(epochs // 2, 20)
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    self.downstream_model.reset()
-                    test_loss = self.compute(
-                        graph, train_mask, val_mask, test_mask, labels, reduced_epochs
-                    )
-                    test_losses.append(test_loss)
-                else:
-                    raise e
-
-            # Force garbage collection and CUDA cache cleanup after each step
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        # Get the losses
-        if len(test_losses) == 0:
-            return []
-
-        l_g0 = test_losses[0]   # L(G_0) - original graph
-        l_gn = test_losses[-1]  # L(G_N) - completely edgeless graph
-
-        # Compute information metrics using specified normalization
-        information_metrics = []
-
-        if normalization == 'additive':
-            # (A) Additive Normalization: I^add(G_k) = (I(G_k;Y) - I(G_N;Y)) / (I(G_0;Y) - I(G_N;Y))
-            # where I(G_k;Y) = H(Y) - H(Y|G_k) and H(Y|G_k) = test_loss
-            # Since H(Y) is constant, I(G_k;Y) = C - test_loss for some constant C
-            # So I^add(G_k) = (l_gn - test_loss) / (l_gn - l_g0)
-            denominator = l_gn - l_g0
-            if abs(denominator) > 1e-10:  # Avoid division by very small numbers
-                for test_loss in test_losses:
-                    numerator = l_gn - test_loss
-                    information_metric = numerator / denominator
-                    information_metrics.append(information_metric)
-            else:
-                # If denominator is close to 0, all graphs perform similarly
-                information_metrics = [1.0] * len(test_losses)
-
-        else:  # normalization == 'log_ratio' (default)
-            # (B) Log-ratio Normalization: I^log(G_k) = log(L(G_k)/L(G_N)) / log(L(G_0)/L(G_N))
-            for test_loss in test_losses:
-                if l_gn > 0 and l_g0 > 0:
-                    # Check if the denominator is valid
-                    denominator = math.log(l_g0 / l_gn)
-                    if abs(denominator) > 1e-10:  # Avoid division by very small numbers
-                        numerator = math.log(test_loss / l_gn)
-                        information_metric = numerator / denominator
-                    else:
-                        # If denominator is close to 0, set metric based on whether test_loss equals l_gn
-                        information_metric = 1.0 if abs(test_loss - l_gn) < 1e-10 else 0.0
-                else:
-                    # Handle edge cases where losses are 0
-                    if l_gn == 0:
-                        information_metric = 1.0 if test_loss == 0 else float('inf')
-                    else:
-                        information_metric = 0.0
-
-                information_metrics.append(information_metric)
-
-        return information_metrics
+        test_losses, _ = self.evaluate_list(
+            summary_graph_list,
+            train_mask,
+            val_mask,
+            test_mask,
+            labels,
+            epochs,
+        )
+        return self.normalize_losses(test_losses, normalization)
 
 
 class AccuracyMetric:
@@ -354,49 +388,17 @@ class AccuracyMetric:
         Returns:
             List[float]: Accuracy values for each graph
         """
-        accuracies = []
-        for i, graph in enumerate(summary_graph_list):
-            # Memory management: Clear CUDA cache before each computation
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            # Set random seed for consistent initialization across different GS models
-            # Use index-based seed offset to ensure different initialization for each step
-            step_seed = self.random_seed + i * 1000
-            torch.manual_seed(step_seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed(step_seed)
-                torch.cuda.manual_seed_all(step_seed)
-
-            # Reset model for each graph evaluation with consistent seed
-            self.downstream_model.reset()
-
-            try:
-                accuracy = self.compute(
-                    graph, train_mask, val_mask, test_mask, labels, epochs
-                )
-                accuracies.append(accuracy)
-            except RuntimeError as e:
-                if "out of memory" in str(e).lower():
-                    print(f"⚠️ CUDA OOM at step {i}, trying with reduced epochs...")
-                    # Try with reduced epochs
-                    reduced_epochs = max(epochs // 2, 20)
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    self.downstream_model.reset()
-                    accuracy = self.compute(
-                        graph, train_mask, val_mask, test_mask, labels, reduced_epochs
-                    )
-                    accuracies.append(accuracy)
-                else:
-                    raise e
-
-            # Force garbage collection and CUDA cache cleanup after each step
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
+        evaluator = InformationMetric(
+            self.downstream_model, self.device, random_seed=self.random_seed
+        )
+        _, accuracies = evaluator.evaluate_list(
+            summary_graph_list,
+            train_mask,
+            val_mask,
+            test_mask,
+            labels,
+            epochs,
+        )
         return accuracies
 
 

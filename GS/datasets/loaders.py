@@ -16,7 +16,7 @@ All datasets are processed for graph summarization experiments.
 
 import torch
 from torch_geometric.data import Data
-from torch_geometric.datasets import Planetoid, KarateClub, IMDB, Reddit, WikiCS
+from torch_geometric.datasets import Planetoid, KarateClub, IMDB, Reddit, WikiCS, WebKB
 from torch_geometric.datasets.tu_dataset import TUDataset
 from torch_geometric.transforms import NormalizeFeatures
 from torch_geometric.utils import to_undirected
@@ -60,7 +60,9 @@ class DatasetLoader:
     CITATION_DATASETS = ['Cora', 'CiteSeer', 'PubMed']
     SOCIAL_DATASETS = ['KarateClub', 'IMDB', 'Reddit']
     ACADEMIC_DATASETS = ['WikiCS']
+    WEBKB_DATASETS = ['Cornell', 'Texas', 'Wisconsin']
     SO_RELATION_DATASETS = ['SO_relation_ME', 'SO_relation_MT']
+    LAKE_DATASET_DIRS = ['50lake_networks', '230lake_networks']
 
     # OGB Node Classification datasets by scale
     OGB_SMALL_DATASETS = ['ogbn-arxiv']  # ~170K nodes
@@ -69,7 +71,7 @@ class DatasetLoader:
 
     OGB_DATASETS = OGB_SMALL_DATASETS + OGB_MEDIUM_DATASETS + OGB_LARGE_DATASETS
 
-    SUPPORTED_DATASETS = CITATION_DATASETS + SOCIAL_DATASETS + ACADEMIC_DATASETS + SO_RELATION_DATASETS
+    SUPPORTED_DATASETS = CITATION_DATASETS + SOCIAL_DATASETS + ACADEMIC_DATASETS + WEBKB_DATASETS + SO_RELATION_DATASETS
 
     # Add OGB datasets only if OGB is available
     if OGB_AVAILABLE:
@@ -105,10 +107,6 @@ class DatasetLoader:
             - val_mask: Boolean tensor for validation nodes
             - test_mask: Boolean tensor for test nodes
         """
-        if dataset_name not in self.SUPPORTED_DATASETS:
-            raise ValueError(f"Dataset {dataset_name} not supported. "
-                           f"Choose from {self.SUPPORTED_DATASETS}")
-
         if task_type not in ['original', 'degree', 'degree_centrality', 'pagerank', 'closeness_centrality']:
             raise ValueError(f"Task type {task_type} not supported. Choose from ['original', 'degree', 'degree_centrality', 'pagerank', 'closeness_centrality']")
 
@@ -163,6 +161,12 @@ class DatasetLoader:
                 # Create masks if not available
                 train_mask, val_mask, test_mask = self._create_node_masks(data.num_nodes)
 
+        elif dataset_name in self.WEBKB_DATASETS:
+            dataset = WebKB(root=self.root_dir, name=dataset_name, transform=transform)
+            data = dataset[0]
+            train_mask = data.train_mask[:, 0] if data.train_mask.dim() > 1 else data.train_mask
+            val_mask = data.val_mask[:, 0] if data.val_mask.dim() > 1 else data.val_mask
+            test_mask = data.test_mask[:, 0] if data.test_mask.dim() > 1 else data.test_mask
 
         elif dataset_name in self.SO_RELATION_DATASETS:
             data = self._load_so_relation_dataset(dataset_name, normalize_features)
@@ -173,7 +177,12 @@ class DatasetLoader:
                 raise ImportError("OGB package is required for OGB datasets. Install with: pip install ogb")
             data, train_mask, val_mask, test_mask = self._load_ogb_dataset(dataset_name, normalize_features)
 
+        elif self._resolve_lake_network_path(dataset_name) is not None:
+            data = self._load_lake_dataset(dataset_name, normalize_features)
+            train_mask, val_mask, test_mask = self._create_node_masks(data.num_nodes)
+
         else:
+            supported = self.SUPPORTED_DATASETS + self.list_available_lake_datasets()
             raise ValueError(f"Dataset {dataset_name} loading not implemented yet")
         
         # Ensure all required attributes exist
@@ -299,23 +308,20 @@ class DatasetLoader:
         from torch_geometric.utils import degree
 
         # Calculate node degrees
-        node_degrees = degree(edge_index[0], num_nodes).long()
+        node_degrees = degree(edge_index[0], num_nodes).float()
 
-        # Sort degrees to find thresholds
-        sorted_degrees, sorted_indices = torch.sort(node_degrees)
-
-        # Split into three roughly equal groups
-        n_low = num_nodes // 3
-        n_medium = num_nodes // 3
-        # n_high = remaining nodes
-
-        low_threshold = sorted_degrees[n_low - 1] if n_low > 0 else 0
-        medium_threshold = sorted_degrees[n_low + n_medium - 1] if n_low + n_medium > 0 else 0
-
-        # Create labels: 0=low, 1=medium, 2=high
+        # Use rank-based assignment instead of thresholding so tied degrees do not
+        # collapse an entire class, which happens frequently on lake networks.
+        sorted_indices = torch.argsort(node_degrees)
         labels = torch.zeros(num_nodes, dtype=torch.long)
-        labels[node_degrees > low_threshold] = 1  # medium
-        labels[node_degrees > medium_threshold] = 2  # high
+
+        n_low = max(num_nodes // 3, 1)
+        n_medium = max(num_nodes // 3, 1)
+        low_end = min(n_low, num_nodes)
+        medium_end = min(n_low + n_medium, num_nodes)
+
+        labels[sorted_indices[low_end:medium_end]] = 1
+        labels[sorted_indices[medium_end:]] = 2
 
         print(f"Degree-based labels: Low={torch.sum(labels == 0)}, "
               f"Medium={torch.sum(labels == 1)}, High={torch.sum(labels == 2)}")
@@ -420,6 +426,14 @@ class DatasetLoader:
         """
         Create closeness centrality-based labels (high/medium/low closeness centrality).
 
+        Closeness centrality is calculated as the reciprocal of the average shortest-path
+        distance from a node to ALL other reachable nodes in the graph. For disconnected
+        graphs, the Wasserman-Faust improved formula is used, which normalizes by the
+        fraction of reachable nodes.
+
+        This examines whether pruning retains essential shortest-path structures by
+        measuring how close each node is to all other nodes in the entire network.
+
         Args:
             edge_index: Graph edge indices
             num_nodes: Number of nodes
@@ -435,11 +449,14 @@ class DatasetLoader:
         G.add_nodes_from(range(num_nodes))
         G.add_edges_from(edge_list)
 
-        # Calculate closeness centrality
+        # Calculate closeness centrality using Wasserman-Faust improved formula
+        # This computes closeness based on ALL reachable nodes in the graph
+        # wf_improved=True handles disconnected graphs properly
         try:
-            closeness = nx.closeness_centrality(G)
+            closeness = nx.closeness_centrality(G, wf_improved=True)
         except:
-            # If graph is disconnected, use degree centrality as fallback
+            # If calculation fails, use degree centrality as fallback
+            print("Warning: Closeness centrality calculation failed, using degree centrality as fallback")
             closeness = nx.degree_centrality(G)
 
         # Convert to tensor
@@ -536,6 +553,112 @@ class DatasetLoader:
         data._dataset_name = dataset_name
         data._ko_to_idx = ko_to_idx
         data._idx_to_ko = {idx: ko for ko, idx in ko_to_idx.items()}
+
+        return data
+
+    def _resolve_lake_network_path(self, dataset_name: str) -> Optional[str]:
+        """
+        Resolve a lake network TSV file for names like HongL or XYH.
+
+        Matching is case-insensitive and prefers filenames ending with
+        `_<dataset_name>_network.tsv` when multiple matches exist.
+        """
+        matches = []
+        target = dataset_name.lower()
+
+        for lake_dir in self.LAKE_DATASET_DIRS:
+            search_dir = os.path.join(self.root_dir, lake_dir)
+            if not os.path.isdir(search_dir):
+                continue
+
+            for filename in sorted(os.listdir(search_dir)):
+                if not filename.endswith('.tsv'):
+                    continue
+                stem = os.path.splitext(filename)[0].lower()
+                if target in stem:
+                    matches.append(os.path.join(search_dir, filename))
+
+        if not matches:
+            return None
+
+        exact_suffix = f"_{target}_network.tsv"
+        exact_matches = [path for path in matches if path.lower().endswith(exact_suffix)]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+
+        return matches[0]
+
+    def list_available_lake_datasets(self) -> List[str]:
+        """List lake dataset aliases inferred from local TSV filenames."""
+        aliases = set()
+
+        for lake_dir in self.LAKE_DATASET_DIRS:
+            search_dir = os.path.join(self.root_dir, lake_dir)
+            if not os.path.isdir(search_dir):
+                continue
+
+            for filename in os.listdir(search_dir):
+                if not filename.endswith('.tsv'):
+                    continue
+                stem = os.path.splitext(filename)[0]
+                if stem.endswith('_network'):
+                    aliases.add(stem[:-len('_network')].split('_')[-1])
+
+        return sorted(aliases)
+
+    def _load_lake_dataset(self, dataset_name: str, normalize_features: bool = True) -> Data:
+        """
+        Load a directed lake network TSV as a benchmark dataset.
+
+        The input TSV is expected to contain columns: consumer, resource, weight.
+        We keep the original directed edges here; the benchmark preprocessor later
+        converts graphs to undirected form for fair model comparison.
+        """
+        network_path = self._resolve_lake_network_path(dataset_name)
+        if network_path is None:
+            raise FileNotFoundError(f"Lake network file not found for dataset: {dataset_name}")
+
+        network_df = pd.read_csv(network_path, sep='\t')
+        required_columns = {'consumer', 'resource'}
+        if not required_columns.issubset(network_df.columns):
+            raise ValueError(
+                f"Lake network file missing required columns {required_columns}: {network_path}"
+            )
+
+        sources = network_df['consumer'].astype(str).tolist()
+        targets = network_df['resource'].astype(str).tolist()
+
+        all_nodes = sorted(set(sources) | set(targets))
+        node_to_idx = {node: idx for idx, node in enumerate(all_nodes)}
+
+        edge_list = [
+            (node_to_idx[src], node_to_idx[tgt])
+            for src, tgt in zip(sources, targets)
+        ]
+
+        if edge_list:
+            edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+        else:
+            edge_index = torch.zeros((2, 0), dtype=torch.long)
+
+        num_nodes = len(all_nodes)
+        if normalize_features:
+            x = torch.randn(num_nodes, min(64, max(num_nodes, 1)))
+            x = torch.nn.functional.normalize(x, dim=1)
+        else:
+            x = torch.eye(num_nodes, dtype=torch.float)
+
+        data = Data(
+            x=x,
+            edge_index=edge_index,
+            y=torch.zeros(num_nodes, dtype=torch.long),
+            num_nodes=num_nodes
+        )
+
+        data._dataset_name = dataset_name
+        data._lake_network_path = network_path
+        data._node_to_idx = node_to_idx
+        data._idx_to_node = {idx: node for node, idx in node_to_idx.items()}
 
         return data
 
@@ -642,8 +765,10 @@ class DatasetLoader:
                 # Create identity features if none exist
                 data.x = torch.eye(num_nodes)
                 print(f"Created identity features for {dataset_name}")
-            elif normalize_features:
-                # Apply normalization if requested
+            elif normalize_features and dataset_name != 'ogbn-arxiv':
+                # OGBN-Arxiv ships signed 128-dimensional paper embeddings.
+                # PyG NormalizeFeatures shifts negative values before row
+                # normalization, which destroys the semantics of these features.
                 from torch_geometric.transforms import NormalizeFeatures
                 transform = NormalizeFeatures()
                 data = transform(data)
@@ -847,13 +972,15 @@ class DatasetLoader:
     
     def preprocess_for_summarization(self, 
                                      data: Data, 
-                                     remove_self_loops: bool = True) -> Data:
+                                     remove_self_loops: bool = True,
+                                     to_undirected_graph: bool = True) -> Data:
         """
         Preprocess graph data for graph summarization experiments.
         
         Args:
             data: Input graph data
             remove_self_loops: Whether to remove self-loops
+            to_undirected_graph: Whether to convert the graph to undirected
             
         Returns:
             Data: Preprocessed graph data
@@ -870,9 +997,10 @@ class DatasetLoader:
             # Remove self-loops for cleaner summarization
             processed_data.edge_index, _ = remove_loops(processed_data.edge_index)
         
-        # Ensure the graph is undirected (add reverse edges if needed)
-        from torch_geometric.utils import to_undirected
-        processed_data.edge_index = to_undirected(processed_data.edge_index)
+        # Ensure the graph is undirected when requested.
+        if to_undirected_graph:
+            from torch_geometric.utils import to_undirected
+            processed_data.edge_index = to_undirected(processed_data.edge_index)
         
         # Verify sparse format
         if not self.verify_sparse_format(processed_data):

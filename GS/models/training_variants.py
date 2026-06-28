@@ -1,8 +1,8 @@
 """
-训练策略变体
+Training Strategy Variants
 
-将训练策略作为LearnableGraphSummarization模型的消融实验变体。
-根据MODEL.md，训练策略是模型的一部分，而不是独立的组件。
+Uses training strategies as ablation experiment variants for LearnableGraphSummarization model.
+According to MODEL.md, training strategy is part of the model, not an independent component.
 """
 
 import torch
@@ -20,14 +20,15 @@ from .training_strategies import (
     GraphSummarizationTrainer
 )
 from .gradient_based import GradientBasedGraphSummarization
+from .gradient_based_undirected import GradientBasedUndirectedGraphSummarization, JointSubsetGradientBase
 from .base import GraphSummarizationModel
 
 
 class LearnableGraphSummarization_FixedUniform(LearnableGraphSummarization):
     """
-    使用固定均匀权重训练策略的模型变体。
+    Model variant using fixed uniform weight training strategy.
     
-    训练策略：所有步骤权重均为1（uniform weighting）
+    Training strategy: All step weights are 1 (uniform weighting)
     """
     
     def __init__(self, *args, **kwargs):
@@ -36,15 +37,15 @@ class LearnableGraphSummarization_FixedUniform(LearnableGraphSummarization):
         self.variant_name = "fixed_uniform"
     
     def get_training_strategy(self):
-        """返回该变体使用的训练策略"""
+        """Return training strategy used by this variant"""
         return self.training_strategy
 
 
 class LearnableGraphSummarization_FixedCosine(LearnableGraphSummarization):
     """
-    使用固定余弦权重训练策略的模型变体。
+    Model variant using fixed cosine weight training strategy.
     
-    训练策略：权重 = 0.5 + 0.5*cos(k/N_step)
+    Training strategy: weight = 0.5 + 0.5*cos(k/N_step)
     """
     
     def __init__(self, *args, **kwargs):
@@ -53,15 +54,15 @@ class LearnableGraphSummarization_FixedCosine(LearnableGraphSummarization):
         self.variant_name = "fixed_cosine"
     
     def get_training_strategy(self):
-        """返回该变体使用的训练策略"""
+        """Return training strategy used by this variant"""
         return self.training_strategy
 
 
 class LearnableGraphSummarization_DynamicFW(LearnableGraphSummarization):
     """
-    使用动态Frank-Wolfe权重训练策略的模型变体。
+    Model variant using dynamic Frank-Wolfe weight training strategy.
     
-    训练策略：使用Frank-Wolfe算法动态计算权重
+    Training strategy: Dynamically compute weights using Frank-Wolfe algorithm
     """
     
     def __init__(self, *args, **kwargs):
@@ -70,15 +71,15 @@ class LearnableGraphSummarization_DynamicFW(LearnableGraphSummarization):
         self.variant_name = "dynamic_frank_wolfe"
     
     def get_training_strategy(self):
-        """返回该变体使用的训练策略"""
+        """Return training strategy used by this variant"""
         return self.training_strategy
 
 
 class LearnableGraphSummarization_DynamicUGD(LearnableGraphSummarization):
     """
-    使用动态UGD权重训练策略的模型变体。
+    Model variant using dynamic UGD weight training strategy.
     
-    训练策略：使用UGD算法动态计算权重
+    Training strategy: Dynamically compute weights using UGD algorithm
     """
     
     def __init__(self, *args, **kwargs):
@@ -87,82 +88,82 @@ class LearnableGraphSummarization_DynamicUGD(LearnableGraphSummarization):
         self.variant_name = "dynamic_ugd"
     
     def get_training_strategy(self):
-        """返回该变体使用的训练策略"""
+        """Return training strategy used by this variant"""
         return self.training_strategy
 
 
 class TrainableGraphSummarizationModel:
     """
-    可训练的图总结模型包装器。
+    Trainable graph summarization model wrapper.
     
-    将模型和其对应的训练策略结合在一起，提供统一的训练接口。
+    Combines model with its corresponding training strategy, provides unified training interface.
     """
     
-    def __init__(self, model: Union[LearnableGraphSummarization, GradientBasedGraphSummarization], downstream_model_factory=None):
+    def __init__(self, model: Union[LearnableGraphSummarization, GradientBasedGraphSummarization, GradientBasedUndirectedGraphSummarization, JointSubsetGradientBase], downstream_model_factory=None):
         """
-        初始化可训练模型。
-        
+        Initialize trainable model.
+
         Args:
-            model: 图总结模型
-            downstream_model_factory: 创建下游任务模型的工厂函数，如果为None则使用默认GCN
+            model: Graph summarization model
+            downstream_model_factory: Factory function to create downstream task model, uses default GCN if None
         """
         self.model = model
         self.downstream_model_factory = downstream_model_factory
-        
-        # 根据模型类型选择不同的训练方式
-        if isinstance(model, GradientBasedGraphSummarization):
-            # 基于梯度的模型使用特殊训练方式
+
+        # Select different training methods based on model type
+        if isinstance(model, (GradientBasedGraphSummarization, GradientBasedUndirectedGraphSummarization, JointSubsetGradientBase)):
+            # Gradient-based models use special training method
             self.training_strategy = None
             self.trainer = None
         elif isinstance(model, LearnableGraphSummarization):
-            # 可学习模型使用标准训练策略
+            # Learnable models use standard training strategy
             if hasattr(model, 'training_strategy'):
                 self.training_strategy = model.training_strategy
             else:
-                # 默认使用固定均匀权重策略
+                # Default to fixed uniform weight strategy
                 self.training_strategy = FixedReweightingStrategy('uniform')
             
-            # 创建训练器
+            # Create trainer
             self.trainer = GraphSummarizationTrainer(
                 model=self.model,
                 strategy=self.training_strategy,
                 downstream_model_factory=downstream_model_factory
             )
         else:
-            # 其他模型暂不支持训练
+            # Other models do not support training yet
             self.training_strategy = None
             self.trainer = None
     
-    def train(self, 
+    def train(self,
               graph: Data,
               train_labels: torch.Tensor,
               train_mask: torch.Tensor,
               val_mask: torch.Tensor,
               *args, **kwargs):
-        """训练模型"""
-        if isinstance(self.model, GradientBasedGraphSummarization):
-            # 基于梯度的模型需要设置训练数据
+        """Train model"""
+        if isinstance(self.model, (GradientBasedGraphSummarization, GradientBasedUndirectedGraphSummarization, JointSubsetGradientBase)):
+            # Gradient-based models need to set training data
             self.model.train_mask = train_mask.to(self.model.device)
-            self.model.val_mask = val_mask.to(self.model.device)  
+            self.model.val_mask = val_mask.to(self.model.device)
             self.model.labels = train_labels.to(self.model.device)
             self.model.is_trained = True
-            
-            # 返回空的训练历史（基于梯度的模型不需要传统训练）
+
+            # Return empty training history (gradient-based models do not need traditional training)
             return {'loss_history': [], 'val_loss_history': []}
         elif self.trainer is not None:
-            # 可学习模型使用标准训练器
+            # Learnable models use standard trainer
             return self.trainer.train(graph, train_labels, train_mask, val_mask, *args, **kwargs)
         else:
-            # 不支持训练的模型
-            print("Warning: 该模型不支持训练")
+            # Models that do not support training
+            print("Warning: This model does not support training")
             return {'loss_history': [], 'val_loss_history': []}
     
     def summarize(self, *args, **kwargs):
-        """生成图总结（委托给底层模型）"""
+        """Generate graph summary (delegate to underlying model)"""
         return self.model.summarize(*args, **kwargs)
     
     def get_variant_info(self) -> Dict[str, Any]:
-        """获取变体信息"""
+        """Get variant information"""
         return {
             'model_type': type(self.model).__name__,
             'training_strategy': type(self.training_strategy).__name__,

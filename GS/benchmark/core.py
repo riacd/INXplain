@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 import numpy as np
 
-from ..metrics import ComplexityMetric, InformationMetric, AccuracyMetric, SNRAnalysis, ICAnalysis
+from ..metrics import ComplexityMetric, InformationMetric, AccuracyMetric, ICAnalysis
 from ..models import GraphSummarizationModel, DownstreamModel
 from ..datasets import DatasetLoader
 
@@ -26,7 +26,7 @@ class Benchmark:
     1. Loading datasets
     2. Running graph summarization
     3. Computing complexity and information metrics
-    4. Calculating SNR-AUC scores
+    4. Calculating IC-AUC scores
     5. Generating reports and visualizations
     """
     
@@ -179,9 +179,9 @@ class Benchmark:
                     verbose=False
                 )
             elif hasattr(gs_model, 'train'):
-                # Training through TrainableGraphSummarizationModel wrapper  
-                # 确保训练时使用相同的下游任务模型类型
-                print(f"📋 训练将使用相同的下游任务模型: {dt_model_name}")
+                # Training through TrainableGraphSummarizationModel wrapper
+                # Ensure training uses the same downstream task model type
+                print(f"📋 Training will use the same downstream task model: {dt_model_name}")
                 gs_model.train(
                     graph=original_graph,
                     train_labels=original_graph.y,
@@ -239,10 +239,10 @@ class Benchmark:
             epochs=training_epochs
         )
         
-        # Compute SNR-AUC
+        # Compute IC-AUC
         if verbose:
-            print("  Computing SNR-AUC...")
-        snr_auc = SNRAnalysis.compute_snr_auc(complexity_metrics, information_metrics)
+            print("  Computing IC-AUC...")
+        snr_auc = ICAnalysis.compute_ic_auc(complexity_metrics, information_metrics)
         
         # Compile results
         experiment_results = {
@@ -261,7 +261,7 @@ class Benchmark:
         }
         
         if verbose:
-            print(f"  Results: SNR-AUC = {snr_auc:.4f}")
+            print(f"  Results: IC-AUC = {snr_auc:.4f}")
             print(f"  Original graph: {original_graph.num_nodes} nodes, {original_graph.edge_index.size(1)} edges")
             print(f"  Complexity range: [{min(complexity_metrics):.1f}, {max(complexity_metrics):.1f}]")
             print(f"  Information range: [{min(information_metrics):.4f}, {max(information_metrics):.4f}]")
@@ -413,7 +413,7 @@ class Benchmark:
         print(f"Failed: {len(failed_experiments)}")
         
         if successful_experiments:
-            print("\nSNR-AUC Results by Dataset:")
+            print("\nIC-AUC Results by Dataset:")
             print("-" * 40)
             
             # Group by dataset
@@ -461,11 +461,11 @@ class Benchmark:
         successful_experiments = [exp for exp in self.results['experiments'] if 'snr_auc' in exp]
         
         for exp in successful_experiments:
-            title = f"SNR Curve: {exp['dataset']} + {exp['gs_model']} + {exp['dt_model']}"
-            filename = f"snr_{exp['dataset']}_{exp['gs_model']}_{exp['dt_model']}.png"
+            title = f"IC Curve: {exp['dataset']} + {exp['gs_model']} + {exp['dt_model']}"
+            filename = f"ic_{exp['dataset']}_{exp['gs_model']}_{exp['dt_model']}.png"
             filepath = os.path.join(save_dir, filename)
             
-            SNRAnalysis.plot_snr_curve(
+            ICAnalysis.plot_ic_curve(
                 exp['complexity_metrics'],
                 exp['information_metrics'], 
                 title=title,
@@ -474,9 +474,9 @@ class Benchmark:
         
         print(f"Plots saved to: {save_dir}")
     
-    def export_snr_auc_table(self, filename: Optional[str] = None) -> str:
+    def export_ic_auc_table(self, filename: Optional[str] = None) -> str:
         """
-        Export SNR-AUC results in TSV format as specified in requirements.
+        Export IC-AUC results in TSV format.
         
         Args:
             filename: Optional filename for TSV export
@@ -486,7 +486,7 @@ class Benchmark:
         """
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"snr_auc_results_{timestamp}.tsv"
+            filename = f"ic_auc_results_{timestamp}.tsv"
         
         filepath = os.path.join(self.results_dir, filename)
         
@@ -505,8 +505,12 @@ class Benchmark:
                 f.write(f"{exp['dataset']}\t{exp['gs_model']}\t{exp['dt_model']}\t{exp['snr_auc']:.6f}\t"
                        f"{exp['original_nodes']}\t{exp['original_edges']}\t{exp['num_steps']}\t{exp['timestamp']}\n")
         
-        print(f"SNR-AUC results exported to: {filepath}")
+        print(f"IC-AUC results exported to: {filepath}")
         return filepath
+
+    def export_snr_auc_table(self, filename: Optional[str] = None) -> str:
+        """Compatibility wrapper. Use export_ic_auc_table instead."""
+        return self.export_ic_auc_table(filename)
 
     def export_accuracy_table(self, filename: Optional[str] = None) -> str:
         """
